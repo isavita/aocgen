@@ -1,0 +1,66 @@
+# Ignore generated solution files
+day*.go
+day*.py
+day*.js
+day*.java
+day*.scala
+day*.kt
+day*.groovy
+day*.clj
+day*.cs
+day*.fs
+day*.swift
+day*.m
+day*.r
+day*.hs
+day*.ml
+day*.rkt
+day*.scm
+day*.rb
+day*.erl
+day*.ex
+day*.rs
+day*.c
+day*.cpp
+day*.zig
+day*.f90
+day*.pl
+day*.pas
+day*.cr
+day*.jl
+day*.lua
+day*.php
+day*.dart
+day*.sh
+day*.awk
+day*.nim
+day*.d
+day*.v
+day*.pl
+day*.tcl
+day*.coffee
+day*.ts
+
+# Ignore input file
+input.txt
+
+# Ignore Go binary
+aocgen
+
+# Ignore common Go files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Ignore macOS system files
+.DS_Store
+
+# Ignore IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
