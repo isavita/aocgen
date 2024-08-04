@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,10 +20,8 @@ type Flags struct {
 	Lang     string
 	Model    string
 	ModelAPI string
-	Session  string // Add this field
+	Session  string
 }
-
-var aocBaseURL = "https://adventofcode.com"
 
 type Challenge struct {
 	Name   string `json:"name"`
@@ -32,6 +29,13 @@ type Challenge struct {
 	Answer string `json:"answer"`
 	Task   string `json:"task"`
 }
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+var aocBaseURL = "https://adventofcode.com"
 
 func parseFlags() (Flags, error) {
 	flags := Flags{}
@@ -132,11 +136,6 @@ func generateSolutionFile(challenge Challenge, flags Flags) error {
 	return err
 }
 
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 func callOllamaAPI(apiURL, model string, messages []Message) (map[string]interface{}, error) {
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"model":    model,
@@ -152,7 +151,7 @@ func callOllamaAPI(apiURL, model string, messages []Message) (map[string]interfa
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +270,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	downloadCmd := flag.NewFlagSet("download", flag.ExitOnError)
+	downloadDay := downloadCmd.Int("day", 0, "Day of the challenge")
+	downloadYear := downloadCmd.Int("year", 0, "Year of the challenge")
+	downloadSession := downloadCmd.String("session", "", "Session token for Advent of Code")
+
 	switch os.Args[1] {
 	case "generate":
 		flags, err := parseGenerateFlags()
@@ -284,16 +288,11 @@ func main() {
 		}
 
 	case "download":
-		downloadCmd := flag.NewFlagSet("download", flag.ExitOnError)
-		day := downloadCmd.Int("day", 0, "Day of the challenge")
-		year := downloadCmd.Int("year", 0, "Year of the challenge")
-		session := downloadCmd.String("session", "", "Session token for Advent of Code")
 		downloadCmd.Parse(os.Args[2:])
-
 		flags := Flags{
-			Day:     *day,
-			Year:    *year,
-			Session: *session,
+			Day:     *downloadDay,
+			Year:    *downloadYear,
+			Session: *downloadSession,
 		}
 		if err := runDownloadCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -318,6 +317,10 @@ func main() {
 }
 
 func downloadChallenge(flags Flags) (Challenge, error) {
+	if flags.Session == "" {
+		return Challenge{}, fmt.Errorf("session token is required")
+	}
+
 	client := &http.Client{}
 	challenge := Challenge{}
 
@@ -344,6 +347,23 @@ func downloadChallenge(flags Flags) (Challenge, error) {
 		return challenge, err
 	}
 
+	// Process the challenge description
+	taskParts := strings.Split(string(descBody), "--- Part Two ---")
+	challenge.Task = strings.TrimSpace(taskParts[0])
+
+	// Remove the first part answer if present
+	answerRegex := regexp.MustCompile(`(?m)Your puzzle answer was ([0-9a-zA-Z]+)\.\s*$`)
+	challenge.Task = answerRegex.ReplaceAllString(challenge.Task, "")
+	challenge.Task = strings.TrimSpace(challenge.Task)
+
+	// If it's part 2, include the second part but remove its answer
+	if flags.Part == 2 && len(taskParts) > 1 {
+		secondPart := strings.TrimSpace(taskParts[1])
+		secondPart = answerRegex.ReplaceAllString(secondPart, "")
+		secondPart = strings.TrimSpace(secondPart)
+		challenge.Task += "\n\n--- Part Two ---\n" + secondPart
+	}
+
 	// Download input
 	inputURL := fmt.Sprintf("%s/%d/day/%d/input", aocBaseURL, flags.Year, flags.Day)
 	inputReq, err := http.NewRequest("GET", inputURL, nil)
@@ -367,11 +387,20 @@ func downloadChallenge(flags Flags) (Challenge, error) {
 		return challenge, err
 	}
 
-	challenge.Name = fmt.Sprintf("day%d_part1_%d", flags.Day, flags.Year)
-	challenge.Task = string(descBody)
+	challenge.Name = fmt.Sprintf("day%d_part%d_%d", flags.Day, flags.Part, flags.Year)
 	challenge.Input = string(inputBody)
+	challenge.Answer = "" // Answer will be empty for newly downloaded challenges
 
 	return challenge, nil
+}
+
+func saveChallenges(filename string, challenges []Challenge) error {
+	file, err := json.MarshalIndent(challenges, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filename, file, 0644)
 }
 
 func evaluateSolution(filename string, lang string, challenge Challenge) (bool, error) {
@@ -425,13 +454,24 @@ func runGenerateCommand(flags Flags) error {
 }
 
 func runDownloadCommand(flags Flags) error {
-	_, err := downloadChallenge(flags)
+	challenge, err := downloadChallenge(flags)
 	if err != nil {
 		return fmt.Errorf("error downloading challenge: %v", err)
 	}
 
-	// TODO: Save the challenge to the JSON file
-	fmt.Println("Challenge downloaded successfully!")
+	// Save the challenge to the JSON file
+	challenges, err := loadChallenges("challenges.json")
+	if err != nil {
+		challenges = []Challenge{}
+	}
+
+	challenges = append(challenges, challenge)
+	err = saveChallenges("challenges.json", challenges)
+	if err != nil {
+		return fmt.Errorf("error saving challenge: %v", err)
+	}
+
+	fmt.Println("Challenge downloaded and saved successfully!")
 	return nil
 }
 

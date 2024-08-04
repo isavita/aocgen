@@ -64,3 +64,5 @@ aocgen
 .vscode/
 *.swp
 *.swo
+.env
+.env.*

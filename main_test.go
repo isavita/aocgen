@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
 // TestParseFlags tests the parsing of command-line flags
@@ -166,51 +168,6 @@ func TestFindChallenge(t *testing.T) {
 	}
 }
 
-func TestDownloadChallenge(t *testing.T) {
-	// Mock server to simulate Advent of Code website
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/2024/day/1" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("--- Day 1: Test Challenge ---\nThis is a test challenge description."))
-		} else if r.URL.Path == "/2024/day/1/input" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("Test input data"))
-		} else {
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	// Replace the actual URL with our test server URL
-	originalBaseURL := aocBaseURL
-	aocBaseURL = server.URL
-	defer func() { aocBaseURL = originalBaseURL }()
-
-	flags := Flags{
-		Day:     1,
-		Year:    2024,
-		Session: "test_session_token",
-	}
-
-	challenge, err := downloadChallenge(flags)
-	if err != nil {
-		t.Fatalf("Failed to download challenge: %v", err)
-	}
-
-	expectedName := "day1_part1_2024"
-	if challenge.Name != expectedName {
-		t.Errorf("Expected challenge name %s, got %s", expectedName, challenge.Name)
-	}
-
-	if challenge.Task != "--- Day 1: Test Challenge ---\nThis is a test challenge description." {
-		t.Errorf("Challenge task does not match expected content")
-	}
-
-	if challenge.Input != "Test input data" {
-		t.Errorf("Challenge input does not match expected content")
-	}
-}
-
 func TestEvaluateSolution(t *testing.T) {
 	// Create a temporary solution file
 	tmpfile, err := os.CreateTemp("", "solution*.py")
@@ -322,5 +279,203 @@ func TestGenerateCodeWithAIOllama(t *testing.T) {
 
 	if len(code) < 10 { // Arbitrary small number to ensure we got some content
 		t.Errorf("Generated code is suspiciously short: %s", code)
+	}
+}
+
+func TestDownloadChallenge(t *testing.T) {
+	// Set up a mock server to simulate Advent of Code website
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessionCookie, err := r.Cookie("session")
+		if err != nil || sessionCookie.Value != "test_session" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		switch r.URL.Path {
+		case "/2023/day/1":
+			w.Write([]byte("--- Day 1: Trebuchet?! ---\nSomething is wrong with global snow production..."))
+		case "/2023/day/1/input":
+			w.Write([]byte("1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	// Set the session in an environment variable for testing
+	os.Setenv("ADVENT_OF_CODE_SESSION", "test_session")
+	defer os.Unsetenv("ADVENT_OF_CODE_SESSION")
+
+	// Replace the actual URL with our test server URL
+	originalAocBaseURL := aocBaseURL
+	aocBaseURL = server.URL
+	defer func() { aocBaseURL = originalAocBaseURL }()
+
+	flags := Flags{
+		Day:     1,
+		Year:    2023,
+		Part:    1,
+		Session: "test_session",
+	}
+
+	challenge, err := downloadChallenge(flags)
+	if err != nil {
+		t.Fatalf("Failed to download challenge: %v", err)
+	}
+
+	expectedName := "day1_part1_2023"
+	if challenge.Name != expectedName {
+		t.Errorf("Expected challenge name %s, got %s", expectedName, challenge.Name)
+	}
+
+	if !strings.Contains(challenge.Task, "--- Day 1: Trebuchet?! ---") {
+		t.Errorf("Challenge task does not contain expected content")
+	}
+
+	expectedInput := "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet"
+	if challenge.Input != expectedInput {
+		t.Errorf("Challenge input does not match expected content. Got: %s, Want: %s", challenge.Input, expectedInput)
+	}
+
+	if challenge.Answer != "" {
+		t.Errorf("Expected empty answer for new challenge, got: %s", challenge.Answer)
+	}
+}
+
+func TestDownloadChallengeWithAnswers(t *testing.T) {
+	testCases := []struct {
+		name           string
+		part           int
+		responseBody   string
+		expectedTask   string
+		unexpectedText string
+	}{
+		{
+			name: "Part 1 with answer",
+			part: 1,
+			responseBody: `--- Day 1: Test Challenge ---
+This is part 1.
+Your puzzle answer was 12345.
+
+--- Part Two ---
+This is part 2.
+Your puzzle answer was 67890.`,
+			expectedTask:   "--- Day 1: Test Challenge ---\nThis is part 1.",
+			unexpectedText: "Your puzzle answer was 12345",
+		},
+		{
+			name: "Part 2 with answers",
+			part: 2,
+			responseBody: `--- Day 1: Test Challenge ---
+This is part 1.
+Your puzzle answer was 12345.
+
+--- Part Two ---
+This is part 2.
+Your puzzle answer was 67890.`,
+			expectedTask:   "--- Day 1: Test Challenge ---\nThis is part 1.\n\n--- Part Two ---\nThis is part 2.",
+			unexpectedText: "Your puzzle answer was",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(tc.responseBody))
+			}))
+			defer server.Close()
+
+			originalAocBaseURL := aocBaseURL
+			aocBaseURL = server.URL
+			defer func() { aocBaseURL = originalAocBaseURL }()
+
+			flags := Flags{
+				Day:     1,
+				Year:    2023,
+				Part:    tc.part,
+				Session: "test_session",
+			}
+
+			challenge, err := downloadChallenge(flags)
+			if err != nil {
+				t.Fatalf("Failed to download challenge: %v", err)
+			}
+
+			if challenge.Task != tc.expectedTask {
+				t.Errorf("Expected task:\n%q\n\nGot:\n%q", tc.expectedTask, challenge.Task)
+			}
+
+			if strings.Contains(challenge.Task, tc.unexpectedText) {
+				t.Errorf("Task should not contain: %s\nGot: %s", tc.unexpectedText, challenge.Task)
+			}
+		})
+	}
+}
+
+func TestRealDownloadChallenge(t *testing.T) {
+	if os.Getenv("RUN_REAL_DOWNLOAD_TEST") != "true" {
+		t.Skip("Skipping real download test. Set RUN_REAL_DOWNLOAD_TEST=true to run this test.")
+	}
+
+	err := godotenv.Load()
+	if err != nil {
+		t.Fatalf("Error loading .env file: %v", err)
+	}
+
+	session := os.Getenv("ADVENT_OF_CODE_SESSION")
+	if session == "" {
+		t.Fatal("ADVENT_OF_CODE_SESSION not set in .env file")
+	}
+
+	testCases := []struct {
+		name         string
+		part         int
+		expectedFile string
+	}{
+		{
+			name:         "Download Part 1",
+			part:         1,
+			expectedFile: "day1_part1_2023.txt",
+		},
+		{
+			name:         "Download Part 2",
+			part:         2,
+			expectedFile: "day1_part2_2023.txt",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := Flags{
+				Day:     1,
+				Year:    2023,
+				Part:    tc.part,
+				Session: session,
+			}
+
+			challenge, err := downloadChallenge(flags)
+			if err != nil {
+				t.Fatalf("Failed to download challenge: %v", err)
+			}
+
+			if !strings.Contains(challenge.Task, "--- Day 1: Trebuchet?! ---") {
+				t.Errorf("Challenge task does not contain expected content")
+			}
+
+			if strings.Contains(challenge.Task, "Your puzzle answer was") {
+				t.Errorf("Challenge task should not contain answer")
+			}
+
+			if tc.part == 2 && !strings.Contains(challenge.Task, "--- Part Two ---") {
+				t.Errorf("Part 2 challenge should contain Part Two section")
+			}
+
+			err = os.WriteFile(tc.expectedFile, []byte(challenge.Task+"\n\nInput:\n"+challenge.Input), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write challenge to file: %v", err)
+			}
+
+			t.Logf("Successfully downloaded and saved %s", tc.expectedFile)
+		})
 	}
 }
