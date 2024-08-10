@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -188,7 +189,7 @@ func TestEvaluateSolution(t *testing.T) {
 		Answer: "42",
 	}
 
-	correct, err := evaluateSolution(tmpfile.Name(), "python", challenge)
+	correct, err := evaluateSolution(challenge, tmpfile.Name(), "python", 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to evaluate solution: %v", err)
 	}
@@ -199,7 +200,7 @@ func TestEvaluateSolution(t *testing.T) {
 
 	// Test incorrect solution
 	challenge.Answer = "24"
-	correct, err = evaluateSolution(tmpfile.Name(), "python", challenge)
+	correct, err = evaluateSolution(challenge, tmpfile.Name(), "python", 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to evaluate solution: %v", err)
 	}

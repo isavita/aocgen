@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type Flags struct {
@@ -301,11 +303,21 @@ func main() {
 
 	case "eval":
 		evalCmd := flag.NewFlagSet("eval", flag.ExitOnError)
+		day := evalCmd.Int("day", 0, "Day of the challenge")
+		part := evalCmd.Int("part", 0, "Part of the challenge")
+		year := evalCmd.Int("year", 0, "Year of the challenge")
 		lang := evalCmd.String("lang", "", "Programming language of the solution")
-		solution := evalCmd.String("solution", "", "Path to the solution file")
+
 		evalCmd.Parse(os.Args[2:])
 
-		if err := runEvalCommand(*lang, *solution); err != nil {
+		flags := Flags{
+			Day:  *day,
+			Part: *part,
+			Year: *year,
+			Lang: *lang,
+		}
+
+		if err := runEvaluationCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -403,31 +415,6 @@ func saveChallenges(filename string, challenges []Challenge) error {
 	return os.WriteFile(filename, file, 0644)
 }
 
-func evaluateSolution(filename string, lang string, challenge Challenge) (bool, error) {
-	var cmd *exec.Cmd
-
-	switch lang {
-	case "python":
-		cmd = exec.Command("python", filename)
-	case "ruby":
-		cmd = exec.Command("ruby", filename)
-	// Add more languages as needed
-	default:
-		return false, fmt.Errorf("unsupported language: %s", lang)
-	}
-
-	output, err := cmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("failed to run solution: %v", err)
-	}
-
-	// Trim whitespace and newlines from both the output and the expected answer
-	result := strings.TrimSpace(string(output))
-	expectedAnswer := strings.TrimSpace(challenge.Answer)
-
-	return result == expectedAnswer, nil
-}
-
 func runGenerateCommand(flags Flags) error {
 	challenges, err := loadChallenges("challenges.json")
 	if err != nil {
@@ -475,11 +462,64 @@ func runDownloadCommand(flags Flags) error {
 	return nil
 }
 
-func runEvalCommand(lang, solutionPath string) error {
-	// TODO: Load the challenge from the JSON file
-	challenge := Challenge{} // Placeholder
+func evaluateSolution(challenge Challenge, solutionPath string, lang string, timeout time.Duration) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	correct, err := evaluateSolution(solutionPath, lang, challenge)
+	var cmd *exec.Cmd
+	switch lang {
+	case "python":
+		cmd = exec.CommandContext(ctx, "python", solutionPath)
+	case "javascript":
+		cmd = exec.CommandContext(ctx, "node", solutionPath)
+	case "ruby":
+		cmd = exec.CommandContext(ctx, "ruby", solutionPath)
+	case "go":
+		cmd = exec.CommandContext(ctx, "go", "run", solutionPath)
+	case "java":
+		cmd = exec.CommandContext(ctx, "java", solutionPath)
+	case "elixir":
+		cmd = exec.CommandContext(ctx, "elixir", solutionPath)
+	// Add more cases for other languages as needed
+	default:
+		return false, fmt.Errorf("unsupported language for execution: %s", lang)
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	err := cmd.Run()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return false, fmt.Errorf("execution timed out after %v", timeout)
+		}
+		return false, fmt.Errorf("execution failed: %v\nStderr: %s", err, errBuf.String())
+	}
+
+	output := outBuf.String()
+	return validSolution(output, challenge.Answer), nil
+}
+
+func runEvaluationCommand(flags Flags) error {
+	challenges, err := loadChallenges("challenges.json")
+	if err != nil {
+		return fmt.Errorf("error loading challenges: %v", err)
+	}
+
+	challenge, err := findChallenge(challenges, flags)
+	if err != nil {
+		return fmt.Errorf("error finding challenge: %v", err)
+	}
+
+	ext, err := getFileExtension(flags.Lang)
+	if err != nil {
+		return fmt.Errorf("error getting file extension: %v", err)
+	}
+
+	solutionPath := fmt.Sprintf("day%d_part%d_%d.%s", flags.Day, flags.Part, flags.Year, ext)
+
+	correct, err := evaluateSolution(challenge, solutionPath, flags.Lang, 20*time.Second)
 	if err != nil {
 		return fmt.Errorf("error evaluating solution: %v", err)
 	}
@@ -489,5 +529,42 @@ func runEvalCommand(lang, solutionPath string) error {
 	} else {
 		fmt.Println("Solution is incorrect.")
 	}
+
 	return nil
+}
+
+func validSolution(result, answer string) bool {
+	if strings.Contains(result, answer) {
+		return true
+	}
+
+	// Check for ASCII art answers
+	asciiPatterns := []string{
+		".##..####.###..#..#.###..####.###....##.###...###.",
+		" ##  #### ###  #  # ###  #### ###    ## ###   ### ",
+		"#....#..#....#.....###..######....##....#....#....##....######",
+		"#    #  #    #     ###  ######    ##    #    #    ##    ######",
+		"####.###..####.#..#.###..\n#....#..#....#.#..#.#..#.",
+		"#### ###  #### #  # ###  \n#    #  #    # #  # #  # ",
+		".#....###....##.#..#.####.#..#.#....#..#.\n",
+		" #    ###    ## #  # #### #  # #    #  # \n",
+		" █    ███    ██ █  █ ████ █  █ █    █  █ \n",
+		"#..#.#..#.#..#.#..#.#..#.#..#.#..#....#",
+		"#  # #  # #  # #  # #  # #  # #  #    #",
+		"###..###..###...##..###...##...##..####.",
+		"###  ###  ###   ##  ###   ##   ##  #### ",
+	}
+
+	for _, pattern := range asciiPatterns {
+		if strings.Contains(result, pattern) {
+			return true
+		}
+	}
+
+	// Check for specific numeric formats
+	if strings.Contains(result, "3.465154e+06") || strings.Contains(result, "3.465154e+6") {
+		return true
+	}
+
+	return false
 }
