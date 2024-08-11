@@ -11,8 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v12/parquet/file"
+	"github.com/apache/arrow/go/v12/parquet/pqarrow"
 )
 
 type Flags struct {
@@ -26,10 +33,13 @@ type Flags struct {
 }
 
 type Challenge struct {
-	Name   string `json:"name"`
-	Input  string `json:"input"`
-	Answer string `json:"answer"`
-	Task   string `json:"task"`
+	Name         string `json:"name"`
+	Solution     string `json:"solution"`
+	Input        string `json:"input"`
+	Task         string `json:"task"`
+	SolutionLang string `json:"solution_lang"`
+	Year         int64  `json:"year"`
+	Answer       string `json:"answer"`
 }
 
 type Message struct {
@@ -268,7 +278,7 @@ func parseGenerateFlags() (Flags, error) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Expected 'generate', 'download' or 'eval' subcommands")
+		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
 		os.Exit(1)
 	}
 
@@ -321,7 +331,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-
+	case "list":
+		if err := listChallenges(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "setup":
+		if err := setupDataset(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Println("Expected 'generate', 'download' or 'eval' subcommands")
 		os.Exit(1)
@@ -567,4 +586,143 @@ func validSolution(result, answer string) bool {
 	}
 
 	return false
+}
+
+func listChallenges() error {
+	challenges, err := loadChallenges("challenges.json")
+	if err != nil {
+		return fmt.Errorf("error loading challenges: %v", err)
+	}
+
+	sort.Slice(challenges, func(i, j int) bool {
+		return challenges[i].Name < challenges[j].Name
+	})
+
+	for _, challenge := range challenges {
+		fmt.Printf("%s\n", challenge.Name)
+	}
+
+	return nil
+}
+
+func setupDataset() error {
+	url := "https://huggingface.co/datasets/isavita/advent-of-code/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
+
+	fmt.Println("Downloading dataset...")
+	if err := downloadFile("dataset.parquet", url); err != nil {
+		return fmt.Errorf("error downloading dataset: %v", err)
+	}
+
+	fmt.Println("Processing dataset...")
+	challenges, err := processParquetFile("dataset.parquet")
+	if err != nil {
+		return fmt.Errorf("error processing dataset: %v", err)
+	}
+
+	if len(challenges) == 0 {
+		return fmt.Errorf("no challenges were processed from the dataset")
+	}
+
+	fmt.Println("Saving challenges...")
+	if err := saveChallenges("challenges.json", challenges); err != nil {
+		return fmt.Errorf("error saving challenges: %v", err)
+	}
+
+	fmt.Println("Setup complete!")
+	return nil
+}
+
+func downloadFile(filepath string, url string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+func processParquetFile(filepath string) ([]Challenge, error) {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %v", err)
+	}
+	defer f.Close()
+
+	reader, err := file.NewParquetReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("error creating parquet reader: %v", err)
+	}
+	defer reader.Close()
+
+	arrowReader, err := pqarrow.NewFileReader(reader, pqarrow.ArrowReadProperties{}, memory.DefaultAllocator)
+	if err != nil {
+		return nil, fmt.Errorf("error creating arrow reader: %v", err)
+	}
+
+	table, err := arrowReader.ReadTable(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("error reading table: %v", err)
+	}
+	defer table.Release()
+
+	numRows := int(table.NumRows())
+	fmt.Printf("Total rows in parquet file: %d\n", numRows)
+
+	challenges := make([]Challenge, 0, numRows)
+
+	for i := 0; i < int(table.NumCols()); i++ {
+		col := table.Column(i)
+		chunks := col.Data().Chunks()
+
+		switch col.DataType().ID() {
+		case arrow.STRING:
+			for _, chunk := range chunks {
+				strArr := array.NewStringData(chunk.Data())
+				for j := 0; j < strArr.Len(); j++ {
+					if len(challenges) <= j {
+						challenges = append(challenges, Challenge{})
+					}
+					switch i {
+					case 0:
+						challenges[j].Name = strArr.Value(j)
+					case 1:
+						challenges[j].Solution = strArr.Value(j)
+					case 2:
+						challenges[j].Input = strArr.Value(j)
+					case 3:
+						challenges[j].Task = strArr.Value(j)
+					case 4:
+						challenges[j].SolutionLang = strArr.Value(j)
+					case 6:
+						challenges[j].Answer = strArr.Value(j)
+					}
+				}
+			}
+		case arrow.INT64:
+			for _, chunk := range chunks {
+				int64Arr := array.NewInt64Data(chunk.Data())
+				for j := 0; j < int64Arr.Len(); j++ {
+					if len(challenges) <= j {
+						challenges = append(challenges, Challenge{})
+					}
+					challenges[j].Year = int64Arr.Value(j)
+				}
+			}
+		}
+
+		if i%100 == 0 {
+			fmt.Printf("Processed %d columns\n", i)
+		}
+	}
+
+	fmt.Printf("Total challenges processed: %d\n", len(challenges))
+	return challenges, nil
 }
