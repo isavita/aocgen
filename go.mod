@@ -3,6 +3,7 @@ module aocgen
 go 1.22.2
 
 require (
+	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40
 	github.com/apache/arrow/go/v12 v12.0.1
 	github.com/joho/godotenv v1.5.1
 )
@@ -30,7 +31,7 @@ require (
 	golang.org/x/text v0.7.0 // indirect
 	golang.org/x/tools v0.6.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
-	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013 // indirect
+	google.golang.org/genproto v0.0.0-20210630183607-d20f26d13c79 // indirect
 	google.golang.org/grpc v1.49.0 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 )

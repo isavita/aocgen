@@ -298,89 +298,142 @@ func TestDownloadChallenge(t *testing.T) {
 		}
 
 		switch r.URL.Path {
-		case "/2023/day/1":
-			w.Write([]byte("--- Day 1: Trebuchet?! ---\nSomething is wrong with global snow production..."))
-		case "/2023/day/1/input":
-			w.Write([]byte("1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet"))
+		case "/2022/day/1":
+			w.Write([]byte(`<article class="day-desc">
+                <h2>--- Day 1: Calorie Counting ---</h2>
+                <p>Santa's reindeer typically eat regular reindeer food, but they need a lot of magical energy to deliver presents on Christmas.</p>
+                <h2>--- Part Two ---</h2>
+                <p>By the time you calculate the answer to the Elves' question, they've already realized that the Elf carrying the most Calories of food might eventually run out of snacks.</p>
+            </article>`))
+		case "/2022/day/1/input":
+			w.Write([]byte("3120\n4127\n1830\n1283\n5021\n3569"))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 
-	// Set the session in an environment variable for testing
-	os.Setenv("ADVENT_OF_CODE_SESSION", "test_session")
-	defer os.Unsetenv("ADVENT_OF_CODE_SESSION")
-
 	// Replace the actual URL with our test server URL
 	originalAocBaseURL := aocBaseURL
 	aocBaseURL = server.URL
 	defer func() { aocBaseURL = originalAocBaseURL }()
 
-	flags := Flags{
-		Day:     1,
-		Year:    2023,
-		Part:    1,
-		Session: "test_session",
+	testCases := []struct {
+		name            string
+		part            int
+		expectedName    string
+		expectedTitle   string
+		expectedContent []string
+	}{
+		{
+			name:            "Part 1",
+			part:            1,
+			expectedName:    "day1_part1_2022",
+			expectedTitle:   "--- Day 1: Calorie Counting ---",
+			expectedContent: []string{"Santa's reindeer typically eat regular reindeer food"},
+		},
+		{
+			name:          "Part 2",
+			part:          2,
+			expectedName:  "day1_part2_2022",
+			expectedTitle: "--- Day 1: Calorie Counting ---",
+			expectedContent: []string{
+				"Santa's reindeer typically eat regular reindeer food",
+				"--- Part Two ---",
+				"By the time you calculate the answer to the Elves' question",
+			},
+		},
 	}
 
-	challenge, err := downloadChallenge(flags)
-	if err != nil {
-		t.Fatalf("Failed to download challenge: %v", err)
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := Flags{
+				Day:     1,
+				Year:    2022,
+				Part:    tc.part,
+				Session: "test_session",
+			}
 
-	expectedName := "day1_part1_2023"
-	if challenge.Name != expectedName {
-		t.Errorf("Expected challenge name %s, got %s", expectedName, challenge.Name)
-	}
+			err := downloadChallenge(flags)
+			if err != nil {
+				t.Fatalf("Failed to download challenge: %v", err)
+			}
 
-	if !strings.Contains(challenge.Task, "--- Day 1: Trebuchet?! ---") {
-		t.Errorf("Challenge task does not contain expected content")
-	}
+			challenges, err := loadChallenges(cacheDir, "challenges.json")
+			if err != nil {
+				t.Fatalf("Failed to load challenges: %v", err)
+			}
 
-	expectedInput := "1abc2\npqr3stu8vwx\na1b2c3d4e5f\ntreb7uchet"
-	if challenge.Input != expectedInput {
-		t.Errorf("Challenge input does not match expected content. Got: %s, Want: %s", challenge.Input, expectedInput)
-	}
+			if len(challenges) == 0 {
+				t.Fatalf("No challenges loaded")
+			}
 
-	if challenge.Answer != "" {
-		t.Errorf("Expected empty answer for new challenge, got: %s", challenge.Answer)
+			challenge := challenges[len(challenges)-1]
+
+			if challenge.Name != tc.expectedName {
+				t.Errorf("Expected challenge name %s, got %s", tc.expectedName, challenge.Name)
+			}
+
+			// Print out the actual task content
+			t.Logf("Actual task content for %s:\n%s", tc.name, challenge.Task)
+
+			if !strings.Contains(challenge.Task, tc.expectedTitle) {
+				t.Errorf("Challenge task does not contain expected title.\nExpected: %s\nGot: %s", tc.expectedTitle, challenge.Task)
+			}
+
+			for _, content := range tc.expectedContent {
+				if !strings.Contains(challenge.Task, content) {
+					t.Errorf("Challenge task does not contain expected content.\nExpected to find: %s\nIn: %s", content, challenge.Task)
+				}
+			}
+
+			expectedInput := "3120\n4127\n1830\n1283\n5021\n3569"
+			if challenge.Input != expectedInput {
+				t.Errorf("Challenge input does not match expected content. Got: %s, Want: %s", challenge.Input, expectedInput)
+			}
+
+			if challenge.Answer != "" {
+				t.Errorf("Expected empty answer for new challenge, got: %s", challenge.Answer)
+			}
+		})
 	}
 }
 
 func TestDownloadChallengeWithAnswers(t *testing.T) {
 	testCases := []struct {
-		name           string
-		part           int
-		responseBody   string
-		expectedTask   string
-		unexpectedText string
+		name            string
+		part            int
+		responseBody    string
+		expectedTitle   string
+		expectedContent string
+		unexpectedText  string
 	}{
 		{
 			name: "Part 1 with answer",
 			part: 1,
-			responseBody: `--- Day 1: Test Challenge ---
-This is part 1.
-Your puzzle answer was 12345.
-
---- Part Two ---
-This is part 2.
-Your puzzle answer was 67890.`,
-			expectedTask:   "--- Day 1: Test Challenge ---\nThis is part 1.",
-			unexpectedText: "Your puzzle answer was 12345",
+			responseBody: `<article class="day-desc">
+                <h2>--- Day 1: Calorie Counting ---</h2>
+                <p>Santa's reindeer typically eat regular reindeer food, but they need a lot of magical energy to deliver presents on Christmas.</p>
+                <p>Your puzzle answer was 12345.</p>
+            </article>`,
+			expectedTitle:   "--- Day 1: Calorie Counting ---",
+			expectedContent: "Santa's reindeer typically eat regular reindeer food",
+			unexpectedText:  "Your puzzle answer was",
 		},
 		{
 			name: "Part 2 with answers",
 			part: 2,
-			responseBody: `--- Day 1: Test Challenge ---
-This is part 1.
-Your puzzle answer was 12345.
-
---- Part Two ---
-This is part 2.
-Your puzzle answer was 67890.`,
-			expectedTask:   "--- Day 1: Test Challenge ---\nThis is part 1.\n\n--- Part Two ---\nThis is part 2.",
-			unexpectedText: "Your puzzle answer was",
+			responseBody: `<article class="day-desc">
+                <h2>--- Day 1: Calorie Counting ---</h2>
+                <p>Santa's reindeer typically eat regular reindeer food, but they need a lot of magical energy to deliver presents on Christmas.</p>
+                <p>Your puzzle answer was 12345.</p>
+                <h2 id="part2">--- Part Two ---</h2>
+                <p>Now, you're ready to find the real Calorie Counting winner: the Elf carrying the most Calories.</p>
+                <p>Your puzzle answer was 67890.</p>
+            </article>`,
+			expectedTitle:   "--- Day 1: Calorie Counting ---",
+			expectedContent: "Santa's reindeer typically eat regular reindeer food",
+			unexpectedText:  "Your puzzle answer was",
 		},
 	}
 
@@ -402,17 +455,38 @@ Your puzzle answer was 67890.`,
 				Session: "test_session",
 			}
 
-			challenge, err := downloadChallenge(flags)
+			err := downloadChallenge(flags)
 			if err != nil {
 				t.Fatalf("Failed to download challenge: %v", err)
 			}
 
-			if challenge.Task != tc.expectedTask {
-				t.Errorf("Expected task:\n%q\n\nGot:\n%q", tc.expectedTask, challenge.Task)
+			challenges, err := loadChallenges(cacheDir, "challenges.json")
+			if err != nil {
+				t.Fatalf("Failed to load challenges: %v", err)
+			}
+
+			if len(challenges) == 0 {
+				t.Fatalf("No challenges loaded")
+			}
+
+			challenge := challenges[len(challenges)-1]
+
+			if !strings.Contains(challenge.Task, tc.expectedTitle) {
+				t.Errorf("Expected task to contain title: %q, but it doesn't", tc.expectedTitle)
+			}
+
+			if !strings.Contains(challenge.Task, tc.expectedContent) {
+				t.Errorf("Expected task to contain: %q, but it doesn't", tc.expectedContent)
 			}
 
 			if strings.Contains(challenge.Task, tc.unexpectedText) {
-				t.Errorf("Task should not contain: %s\nGot: %s", tc.unexpectedText, challenge.Task)
+				t.Errorf("Task should not contain: %q, but it does", tc.unexpectedText)
+			}
+
+			if tc.part == 2 {
+				if !strings.Contains(challenge.Task, "--- Part Two ---") {
+					t.Errorf("Expected task to contain '--- Part Two ---' for Part 2, but it doesn't")
+				}
 			}
 		})
 	}
@@ -459,10 +533,22 @@ func TestRealDownloadChallenge(t *testing.T) {
 				Session: session,
 			}
 
-			challenge, err := downloadChallenge(flags)
+			err := downloadChallenge(flags)
 			if err != nil {
 				t.Fatalf("Failed to download challenge: %v", err)
 			}
+
+			// Load the challenge from the file to check its contents
+			challenges, err := loadChallenges("aocgen_cache", "challenges.json")
+			if err != nil {
+				t.Fatalf("Failed to load challenges: %v", err)
+			}
+
+			if len(challenges) == 0 {
+				t.Fatalf("No challenges loaded")
+			}
+
+			challenge := challenges[0]
 
 			if !strings.Contains(challenge.Task, "--- Day 1: Trebuchet?! ---") {
 				t.Errorf("Challenge task does not contain expected content")

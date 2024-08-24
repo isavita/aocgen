@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -52,6 +53,7 @@ var cacheDir = "aocgen_cache"
 
 const challengesFile = "challenges.json"
 const datasetParquet = "dataset.parquet"
+const datasetURL = "https://huggingface.co/datasets/isavita/advent-of-code/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
 
 func init() {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -359,9 +361,14 @@ func main() {
 	}
 }
 
-func downloadChallenge(flags Flags) (Challenge, error) {
+func downloadChallenge(flags Flags) error {
 	if flags.Session == "" {
-		return Challenge{}, fmt.Errorf("session token is required")
+		return fmt.Errorf("session token is required")
+	}
+
+	// Set default part to 1 if not specified
+	if flags.Part == 0 {
+		flags.Part = 1
 	}
 
 	client := &http.Client{}
@@ -371,70 +378,113 @@ func downloadChallenge(flags Flags) (Challenge, error) {
 	descURL := fmt.Sprintf("%s/%d/day/%d", aocBaseURL, flags.Year, flags.Day)
 	descReq, err := http.NewRequest("GET", descURL, nil)
 	if err != nil {
-		return challenge, err
+		return err
 	}
 	descReq.AddCookie(&http.Cookie{Name: "session", Value: flags.Session})
 
 	descResp, err := client.Do(descReq)
 	if err != nil {
-		return challenge, err
+		return err
 	}
 	defer descResp.Body.Close()
 
 	if descResp.StatusCode != http.StatusOK {
-		return challenge, fmt.Errorf("failed to download challenge description: %s", descResp.Status)
+		return fmt.Errorf("failed to download challenge description: %s", descResp.Status)
 	}
 
 	descBody, err := io.ReadAll(descResp.Body)
 	if err != nil {
-		return challenge, err
+		return err
 	}
 
 	// Process the challenge description
-	taskParts := strings.Split(string(descBody), "--- Part Two ---")
-	challenge.Task = strings.TrimSpace(taskParts[0])
-
-	// Remove the first part answer if present
-	answerRegex := regexp.MustCompile(`(?m)Your puzzle answer was ([0-9a-zA-Z]+)\.\s*$`)
-	challenge.Task = answerRegex.ReplaceAllString(challenge.Task, "")
-	challenge.Task = strings.TrimSpace(challenge.Task)
-
-	// If it's part 2, include the second part but remove its answer
-	if flags.Part == 2 && len(taskParts) > 1 {
-		secondPart := strings.TrimSpace(taskParts[1])
-		secondPart = answerRegex.ReplaceAllString(secondPart, "")
-		secondPart = strings.TrimSpace(secondPart)
-		challenge.Task += "\n\n--- Part Two ---\n" + secondPart
-	}
+	taskPartOne, taskPartTwo := cleanTaskDescription(string(descBody))
 
 	// Download input
 	inputURL := fmt.Sprintf("%s/%d/day/%d/input", aocBaseURL, flags.Year, flags.Day)
 	inputReq, err := http.NewRequest("GET", inputURL, nil)
 	if err != nil {
-		return challenge, err
+		return err
 	}
 	inputReq.AddCookie(&http.Cookie{Name: "session", Value: flags.Session})
 
 	inputResp, err := client.Do(inputReq)
 	if err != nil {
-		return challenge, err
+		return err
 	}
 	defer inputResp.Body.Close()
 
 	if inputResp.StatusCode != http.StatusOK {
-		return challenge, fmt.Errorf("failed to download challenge input: %s", inputResp.Status)
+		return fmt.Errorf("failed to download challenge input: %s", inputResp.Status)
 	}
 
 	inputBody, err := io.ReadAll(inputResp.Body)
 	if err != nil {
-		return challenge, err
+		return err
 	}
 
-	challenge.Name = fmt.Sprintf("day%d_part%d_%d", flags.Day, flags.Part, flags.Year)
-	challenge.Input = string(inputBody)
-	challenge.Answer = "" // Answer will be empty for newly downloaded challenges
+	// Combine Part 1 and Part 2 for the task field if it's Part 2
+	task := taskPartOne
+	if flags.Part == 2 {
+		task = taskPartOne + "\n\n" + taskPartTwo
+	}
 
-	return challenge, nil
+	challenge = Challenge{
+		Name:         fmt.Sprintf("day%d_part%d_%d", flags.Day, flags.Part, flags.Year),
+		Solution:     "",
+		Input:        string(inputBody),
+		Task:         task,
+		SolutionLang: "",
+		Year:         int64(flags.Year),
+		Answer:       "",
+	}
+
+	// Save the challenge to the JSON file
+	challenges, err := loadChallenges(cacheDir, "challenges.json")
+	if err != nil {
+		challenges = []Challenge{}
+	}
+
+	challenges = append(challenges, challenge)
+	err = saveChallenges("challenges.json", challenges)
+	if err != nil {
+		return fmt.Errorf("error saving challenge: %v", err)
+	}
+
+	fmt.Println("Challenge downloaded and saved successfully!")
+	return nil
+}
+
+func cleanTaskDescription(htmlContent string) (string, string) {
+	re := regexp.MustCompile(`(?s)<article class="day-desc">(.*?)</article>`)
+	matches := re.FindAllStringSubmatch(htmlContent, -1)
+
+	var partOne, partTwo string
+
+	if len(matches) > 0 && len(matches[0]) > 1 {
+		fullContent := stripTags(matches[0][1])
+		fullContent = html.UnescapeString(fullContent)
+
+		// Remove "Your puzzle answer was" and everything after it
+		fullContent = regexp.MustCompile(`Your puzzle answer was.*`).ReplaceAllString(fullContent, "")
+
+		parts := strings.Split(fullContent, "--- Part Two ---")
+
+		partOne = strings.TrimSpace(parts[0])
+		// Add a newline after the title (after the second ---)
+		partOne = regexp.MustCompile(`(--- .* ---)(.*)`).ReplaceAllString(partOne, "$1\n$2")
+
+		if len(parts) > 1 {
+			partTwo = "--- Part Two ---\n" + strings.TrimSpace(parts[1])
+		}
+	}
+
+	return partOne, partTwo
+}
+
+func stripTags(htmlContent string) string {
+	re := regexp.MustCompile(`<[^>]*>`)
+	return re.ReplaceAllString(htmlContent, "")
 }
 
 func saveChallenges(filename string, challenges []Challenge) error {
@@ -472,24 +522,11 @@ func runGenerateCommand(flags Flags) error {
 }
 
 func runDownloadCommand(flags Flags) error {
-	challenge, err := downloadChallenge(flags)
+	err := downloadChallenge(flags)
 	if err != nil {
 		return fmt.Errorf("error downloading challenge: %v", err)
 	}
 
-	// Save the challenge to the JSON file
-	challenges, err := loadChallenges(cacheDir, "challenges.json")
-	if err != nil {
-		challenges = []Challenge{}
-	}
-
-	challenges = append(challenges, challenge)
-	err = saveChallenges("challenges.json", challenges)
-	if err != nil {
-		return fmt.Errorf("error saving challenge: %v", err)
-	}
-
-	fmt.Println("Challenge downloaded and saved successfully!")
 	return nil
 }
 
@@ -577,7 +614,7 @@ func validSolution(result, answer string) bool {
 		"#    #  #    #     ###  ######    ##    #    #    ##    ######",
 		"####.###..####.#..#.###..\n#....#..#....#.#..#.#..#.",
 		"#### ###  #### #  # ###  \n#    #  #    # #  # #  # ",
-		".#....###....##.#..#.####.#..#.#....#..#.\n",
+		"..#....###....##.#..#.####.#..#.#....#..#.\n",
 		" #    ###    ## #  # #### #  # #    #  # \n",
 		" █    ███    ██ █  █ ████ █  █ █    █  █ \n",
 		"#..#.#..#.#..#.#..#.#..#.#..#.#..#....#",
@@ -618,10 +655,8 @@ func listChallenges() error {
 }
 
 func setupDataset() error {
-	url := "https://huggingface.co/datasets/isavita/advent-of-code/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
-
 	fmt.Println("Downloading dataset...")
-	if err := downloadFile(filepath.Join(cacheDir, datasetParquet), url); err != nil {
+	if err := downloadFile(filepath.Join(cacheDir, datasetParquet), datasetURL); err != nil {
 		return fmt.Errorf("error downloading dataset: %v", err)
 	}
 
