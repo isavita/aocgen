@@ -66,3 +66,5 @@ aocgen
 *.swo
 .env
 .env.*
+
+/aocgen_cache/

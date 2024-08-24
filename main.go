@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -47,6 +48,18 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+var cacheDir = "aocgen_cache"
+
+const challengesFile = "challenges.json"
+const datasetParquet = "dataset.parquet"
+
+func init() {
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		fmt.Printf("Failed to create cache directory: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 var aocBaseURL = "https://adventofcode.com"
 
 func parseFlags() (Flags, error) {
@@ -61,15 +74,14 @@ func parseFlags() (Flags, error) {
 	return flags, nil
 }
 
-func loadChallenges(filename string) ([]Challenge, error) {
-	file, err := os.Open(filename)
+func loadChallenges(cacheDir, filename string) ([]Challenge, error) {
+	data, err := os.ReadFile(filepath.Join(cacheDir, filename))
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
 	var challenges []Challenge
-	err = json.NewDecoder(file).Decode(&challenges)
+	err = json.Unmarshal(data, &challenges)
 	return challenges, err
 }
 
@@ -426,16 +438,16 @@ func downloadChallenge(flags Flags) (Challenge, error) {
 }
 
 func saveChallenges(filename string, challenges []Challenge) error {
-	file, err := json.MarshalIndent(challenges, "", "  ")
+	data, err := json.MarshalIndent(challenges, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filename, file, 0644)
+	return os.WriteFile(filepath.Join(cacheDir, filename), data, 0644)
 }
 
 func runGenerateCommand(flags Flags) error {
-	challenges, err := loadChallenges("challenges.json")
+	challenges, err := loadChallenges(cacheDir, "challenges.json")
 	if err != nil {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
@@ -466,7 +478,7 @@ func runDownloadCommand(flags Flags) error {
 	}
 
 	// Save the challenge to the JSON file
-	challenges, err := loadChallenges("challenges.json")
+	challenges, err := loadChallenges(cacheDir, "challenges.json")
 	if err != nil {
 		challenges = []Challenge{}
 	}
@@ -521,7 +533,7 @@ func evaluateSolution(challenge Challenge, solutionPath string, lang string, tim
 }
 
 func runEvaluationCommand(flags Flags) error {
-	challenges, err := loadChallenges("challenges.json")
+	challenges, err := loadChallenges(cacheDir, "challenges.json")
 	if err != nil {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
@@ -589,7 +601,7 @@ func validSolution(result, answer string) bool {
 }
 
 func listChallenges() error {
-	challenges, err := loadChallenges("challenges.json")
+	challenges, err := loadChallenges(cacheDir, "challenges.json")
 	if err != nil {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
@@ -609,22 +621,18 @@ func setupDataset() error {
 	url := "https://huggingface.co/datasets/isavita/advent-of-code/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
 
 	fmt.Println("Downloading dataset...")
-	if err := downloadFile("dataset.parquet", url); err != nil {
+	if err := downloadFile(filepath.Join(cacheDir, datasetParquet), url); err != nil {
 		return fmt.Errorf("error downloading dataset: %v", err)
 	}
 
 	fmt.Println("Processing dataset...")
-	challenges, err := processParquetFile("dataset.parquet")
+	challenges, err := processParquetFile(filepath.Join(cacheDir, datasetParquet))
 	if err != nil {
 		return fmt.Errorf("error processing dataset: %v", err)
 	}
 
-	if len(challenges) == 0 {
-		return fmt.Errorf("no challenges were processed from the dataset")
-	}
-
 	fmt.Println("Saving challenges...")
-	if err := saveChallenges("challenges.json", challenges); err != nil {
+	if err := saveChallenges(challengesFile, challenges); err != nil {
 		return fmt.Errorf("error saving challenges: %v", err)
 	}
 

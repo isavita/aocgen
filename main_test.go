@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,21 +35,25 @@ func TestParseFlags(t *testing.T) {
 
 // TestLoadChallenges tests loading challenges from the JSON file
 func TestLoadChallenges(t *testing.T) {
-	// Create a temporary JSON file for testing
-	tmpFile, err := os.CreateTemp("", "challenges*.json")
+	// Create a temporary directory for the cache
+	tempDir, err := os.MkdirTemp("", "aocgen_cache")
 	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
+		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer os.RemoveAll(tempDir)
 
-	// Write test data to the file
+	// Create a challenges file in the temporary cache directory
+	challengesFile := filepath.Join(tempDir, "challenges.json")
 	testData := []Challenge{
 		{Name: "day1_part1_2015", Input: "test input", Answer: "280", Task: "test task"},
 	}
-	json.NewEncoder(tmpFile).Encode(testData)
-	tmpFile.Close()
+	data, _ := json.Marshal(testData)
+	err = os.WriteFile(challengesFile, data, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test data: %v", err)
+	}
 
-	challenges, err := loadChallenges(tmpFile.Name())
+	challenges, err := loadChallenges(tempDir, "challenges.json")
 	if err != nil {
 		t.Fatalf("Failed to load challenges: %v", err)
 	}
