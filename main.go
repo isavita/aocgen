@@ -301,16 +301,7 @@ if __name__ == '__main__':
     solve()`, flags.Lang), nil
 	}
 
-	prompt := fmt.Sprintf(`Write %s program that reads input from a file called input.txt and prints the output to standard output.
-Focus on writing clean, efficient code that demonstrates your programming skills by concisely solving the challenge.
-
-Coding challenge:
-%s
-
-Respond only with the code surrounded by triple backticks and the language name, like this:
-%s
-# Your code here
-%s`, flags.Lang, challenge.Task, "```"+flags.Lang, "```")
+	prompt := fmt.Sprintf("Write a %s program that solves the following coding challenge:\n\n%s\n\nThe program should read input from a file called 'input.txt' and print the output to standard output.\n\nRespond ONLY with the code surrounded by triple backticks and the language name, like this:\n```%s\n<YOUR CODE HERE>\n```\nDo not include any explanations or comments outside the code block.", flags.Lang, challenge.Task, flags.Lang)
 
 	var result string
 	var err error
@@ -321,7 +312,7 @@ Respond only with the code surrounded by triple backticks and the language name,
 	case strings.HasPrefix(flags.Model, "ollama/"):
 		messages := []map[string]string{
 			{"role": "system", "content": "You are a helpful AI assistant that generates code solutions."},
-			{"role": "user", "content": fmt.Sprintf("Generate a %s solution for this Advent of Code challenge:\n\n%s", flags.Lang, challenge.Task)},
+			{"role": "user", "content": prompt},
 		}
 
 		requestBody := map[string]interface{}{
@@ -348,14 +339,50 @@ Respond only with the code surrounded by triple backticks and the language name,
 		var response map[string]interface{}
 		err = json.Unmarshal(body, &response)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("error unmarshaling response: %v", err)
 		}
 
-		result, ok := response["response"].(string)
-		if !ok {
-			return "", fmt.Errorf("unexpected response format")
+		var content string
+
+		// Check for the simple response format
+		if simpleResponse, ok := response["response"].(string); ok {
+			content = simpleResponse
+		} else {
+			// Check for the complex response format
+			choices, ok := response["choices"].([]interface{})
+			if !ok || len(choices) == 0 {
+				return "", fmt.Errorf("unexpected response format: 'choices' field not found or empty")
+			}
+
+			firstChoice, ok := choices[0].(map[string]interface{})
+			if !ok {
+				return "", fmt.Errorf("unexpected response format: first choice is not a map")
+			}
+
+			message, ok := firstChoice["message"].(map[string]interface{})
+			if !ok {
+				return "", fmt.Errorf("unexpected response format: 'message' field not found in first choice")
+			}
+
+			content, ok = message["content"].(string)
+			if !ok {
+				return "", fmt.Errorf("unexpected response format: 'content' field not found or not a string")
+			}
 		}
-		return result, nil
+
+		// Extract code from the content
+		re := regexp.MustCompile("```(?:.*\n)?([\\s\\S]*?)```")
+		matches := re.FindStringSubmatch(content)
+		if len(matches) < 2 {
+			return "", fmt.Errorf("no code found in the response")
+		}
+
+		code := strings.TrimSpace(matches[1])
+		if code == "" {
+			return "", fmt.Errorf("extracted code is empty")
+		}
+
+		return code, nil
 	default:
 		return "", fmt.Errorf("unsupported model provider: %s", flags.Model)
 	}

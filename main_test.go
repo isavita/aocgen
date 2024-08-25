@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -754,30 +753,91 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 	os.Remove(filename)
 }
 
-func TestMain(m *testing.M) {
-	// Create a temporary directory for test data
+func TestGenerateSolutionFileOllama(t *testing.T) {
+	challenge := Challenge{
+		Name:  "day1_part1_2015",
+		Input: "test input",
+		Task:  "Calculate the sum of digits that match the next digit in the circular list.",
+	}
+	flags := Flags{
+		Day:      1,
+		Part:     1,
+		Year:     2015,
+		Lang:     "python",
+		Model:    "ollama/mistral-nemo",
+		ModelAPI: "http://localhost:11434/v1/chat/completions",
+	}
+
+	// Create a temporary directory for the test
 	tempDir, err := os.MkdirTemp("", "aocgen_test")
 	if err != nil {
-		fmt.Printf("Failed to create temp directory: %v\n", err)
-		os.Exit(1)
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to the temporary directory
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	os.Chdir(tempDir)
+
+	err = generateSolutionFile(challenge, flags)
+	if err != nil {
+		t.Fatalf("Failed to generate solution file: %v", err)
 	}
 
-	// Save the original getCacheDir function
-	originalGetCacheDir := getCacheDir
-
-	// Override getCacheDir for tests
-	getCacheDir = func() string {
-		return tempDir
+	// Check if file was created with correct extension
+	filename := "day1_part1_2015.py"
+	fileInfo, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		t.Errorf("Solution file was not created")
+	} else if err != nil {
+		t.Fatalf("Error checking file: %v", err)
 	}
 
-	// Run tests
-	code := m.Run()
+	// Check if the file is not empty
+	if fileInfo.Size() == 0 {
+		t.Errorf("Generated file is empty")
+	}
 
-	// Restore the original getCacheDir function
-	getCacheDir = originalGetCacheDir
+	// Read and verify the content
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	if !isValidPythonCode(string(content)) {
+		t.Errorf("Generated content is not valid Python code:\n%s", string(content))
+	}
 
 	// Clean up
-	os.RemoveAll(tempDir)
+	os.Remove(filename)
+}
 
-	os.Exit(code)
+func isValidPythonCode(code string) bool {
+	// Check if the code contains common Python patterns
+	pythonPatterns := []string{
+		"def ",
+		"import ",
+		"with open",
+		"print(",
+		"for ",
+		"if ",
+		"while ",
+	}
+
+	for _, pattern := range pythonPatterns {
+		if strings.Contains(code, pattern) {
+			return true
+		}
+	}
+
+	// Check if the code contains 'input.txt'
+	if strings.Contains(code, "input.txt") {
+		return true
+	}
+
+	return false
 }
