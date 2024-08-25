@@ -7,7 +7,7 @@ AoCGen is a CLI tool designed to streamline the process of downloading Advent of
 To install AoCGen, ensure you have Go installed on your system, then run:
 
 ```
-go get github.com/yourusername/aocgen
+go get github.com/isavita/aocgen
 ```
 
 ## Usage

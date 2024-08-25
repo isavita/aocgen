@@ -643,12 +643,32 @@ func listChallenges() error {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
 
-	sort.Slice(challenges, func(i, j int) bool {
-		return challenges[i].Name < challenges[j].Name
-	})
+	// Create a map to store challenges with their languages
+	challengeMap := make(map[string][]string)
 
 	for _, challenge := range challenges {
-		fmt.Printf("%s\n", challenge.Name)
+		key := challenge.Name
+		lang := challenge.SolutionLang
+		if lang == "" {
+			lang = "unsolved"
+		}
+		challengeMap[key] = append(challengeMap[key], lang)
+	}
+
+	// Create a sorted list of challenge names
+	var sortedChallenges []string
+	for challenge := range challengeMap {
+		sortedChallenges = append(sortedChallenges, challenge)
+	}
+	sort.Strings(sortedChallenges)
+
+	// Print sorted challenges with their languages
+	for _, challenge := range sortedChallenges {
+		languages := challengeMap[challenge]
+		sort.Strings(languages) // Sort languages for consistent output
+		for _, lang := range languages {
+			fmt.Printf("%s %s\n", challenge, lang)
+		}
 	}
 
 	return nil
