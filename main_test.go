@@ -25,7 +25,7 @@ func TestParseFlags(t *testing.T) {
 	// Test case
 	os.Args = []string{"cmd", "--day=1", "--part=1", "--year=2015", "--lang=python", "--model=ollama/llama3:8b", "--model_api=http://localhost:11434/v1/chat/completions"}
 
-	flags, err := parseFlags()
+	flags, err := parseFlags(os.Args[1:])
 	if err != nil {
 		t.Fatalf("Failed to parse flags: %v", err)
 	}
@@ -249,15 +249,20 @@ func TestGenerateCodeWithAIOllama(t *testing.T) {
 		}
 
 		var requestBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&requestBody)
+		err := json.NewDecoder(r.Body).Decode(&requestBody)
+		if err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
 
 		if requestBody["model"] != "gemma2:2b-instruct-q8_0" {
 			t.Errorf("Expected model: gemma2:2b-instruct-q8_0, got: %s", requestBody["model"])
 		}
 
 		messages, ok := requestBody["messages"].([]interface{})
-		if !ok || len(messages) != 2 {
-			t.Errorf("Expected 2 messages, got: %v", messages)
+		if !ok {
+			t.Errorf("Expected messages to be an array, got: %T", requestBody["messages"])
+		} else if len(messages) != 2 {
+			t.Errorf("Expected 2 messages, got: %d", len(messages))
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -279,6 +284,51 @@ func TestGenerateCodeWithAIOllama(t *testing.T) {
 
 	code, err := generateCodeWithAI(challenge, flags)
 	if err != nil {
+		t.Fatalf("Failed to generate code with AI: %v", err)
+	}
+
+	if code == "" {
+		t.Errorf("Generated code is empty")
+	}
+
+	if len(code) < 10 { // Arbitrary small number to ensure we got some content
+		t.Errorf("Generated code is suspiciously short: %s", code)
+	}
+}
+
+func TestGenerateCodeWithAIOpenAI(t *testing.T) {
+	// Load the .env file
+	err := godotenv.Load()
+	if err != nil {
+		t.Fatalf("Error loading .env file: %v", err)
+	}
+
+	// Check if SKIP_OPENAI_TESTS is set
+	if os.Getenv("SKIP_OPENAI_TESTS") != "" {
+		t.Skip("Skipping OpenAI test: SKIP_OPENAI_TESTS is set")
+	}
+
+	// Check if OPENAI_API_KEY is set
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		t.Skip("Skipping OpenAI test: OPENAI_API_KEY not set")
+	}
+
+	challenge := Challenge{
+		Name: "day1_part1_2024",
+		Task: "Calculate the sum of all numbers in the input.",
+	}
+	flags := Flags{
+		Lang:     "python",
+		Model:    "gpt-4o-mini",
+		ModelAPI: "https://api.openai.com/v1/chat/completions",
+	}
+
+	code, err := generateCodeWithAI(challenge, flags)
+	if err != nil {
+		if strings.Contains(err.Error(), "insufficient_quota") {
+			t.Skip("Skipping OpenAI test: Insufficient quota")
+		}
 		t.Fatalf("Failed to generate code with AI: %v", err)
 	}
 
@@ -622,6 +672,86 @@ day3_part1_2022 unsolved
 	if output != expectedOutput {
 		t.Errorf("Unexpected output.\nExpected:\n%s\nGot:\n%s", expectedOutput, output)
 	}
+}
+
+func TestGenerateSolutionFileOpenAI(t *testing.T) {
+	// Load the .env file
+	err := godotenv.Load()
+	if err != nil {
+		t.Fatalf("Error loading .env file: %v", err)
+	}
+
+	// Check if SKIP_OPENAI_TESTS is set
+	if os.Getenv("SKIP_OPENAI_TESTS") != "" {
+		t.Skip("Skipping OpenAI test: SKIP_OPENAI_TESTS is set")
+	}
+
+	// Check if OPENAI_API_KEY is set
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		t.Skip("Skipping OpenAI test: OPENAI_API_KEY not set")
+	}
+
+	challenge := Challenge{
+		Name:  "day1_part1_2015",
+		Input: "test input",
+		Task:  "Calculate the sum of digits that match the next digit in the circular list.",
+	}
+	flags := Flags{
+		Day:      1,
+		Part:     1,
+		Year:     2015,
+		Lang:     "python",
+		Model:    "gpt-3.5-turbo", // Using a known valid model
+		ModelAPI: "https://api.openai.com/v1/chat/completions",
+	}
+
+	// Create a temporary directory for the test
+	tempDir, err := os.MkdirTemp("", "aocgen_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to the temporary directory
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	os.Chdir(tempDir)
+
+	err = generateSolutionFile(challenge, flags)
+	if err != nil {
+		if strings.Contains(err.Error(), "insufficient_quota") {
+			t.Skip("Skipping OpenAI test: Insufficient quota")
+		}
+		t.Fatalf("Failed to generate solution file: %v", err)
+	}
+
+	// Check if file was created with correct extension
+	filename := "day1_part1_2015.py"
+	fileInfo, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		t.Errorf("Solution file was not created")
+	} else if err != nil {
+		t.Fatalf("Error checking file: %v", err)
+	}
+
+	// Check if the file is not empty
+	if fileInfo.Size() == 0 {
+		t.Errorf("Generated file is empty")
+	}
+
+	// Print file contents for debugging
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	t.Logf("Generated file contents:\n%s", string(content))
+
+	// Clean up
+	os.Remove(filename)
 }
 
 func TestMain(m *testing.M) {

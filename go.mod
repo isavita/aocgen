@@ -3,7 +3,6 @@ module aocgen
 go 1.22.2
 
 require (
-	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40
 	github.com/apache/arrow/go/v12 v12.0.1
 	github.com/joho/godotenv v1.5.1
 )

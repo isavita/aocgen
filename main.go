@@ -73,16 +73,25 @@ func init() {
 
 var aocBaseURL = "https://adventofcode.com"
 
-func parseFlags() (Flags, error) {
+func parseFlags(args []string) (Flags, error) {
 	flags := Flags{}
-	flag.IntVar(&flags.Day, "day", 0, "Day of the challenge")
-	flag.IntVar(&flags.Part, "part", 0, "Part of the challenge")
-	flag.IntVar(&flags.Year, "year", 0, "Year of the challenge")
-	flag.StringVar(&flags.Lang, "lang", "", "Programming language for the solution")
-	flag.StringVar(&flags.Model, "model", "", "AI model to use")
-	flag.StringVar(&flags.ModelAPI, "model_api", "", "API endpoint for the AI model")
-	flag.StringVar(&flags.Session, "session", "", "Session token for Advent of Code")
-	flag.Parse()
+	flagSet := flag.NewFlagSet("", flag.ContinueOnError)
+	flagSet.IntVar(&flags.Day, "day", 0, "Day of the challenge")
+	flagSet.IntVar(&flags.Part, "part", 0, "Part of the challenge")
+	flagSet.IntVar(&flags.Year, "year", 0, "Year of the challenge")
+	flagSet.StringVar(&flags.Lang, "lang", "", "Programming language for the solution")
+	flagSet.StringVar(&flags.Model, "model", "", "AI model to use")
+	flagSet.StringVar(&flags.ModelAPI, "model_api", "", "API endpoint for the AI model")
+	flagSet.StringVar(&flags.Session, "session", "", "Session token for Advent of Code")
+
+	if len(args) == 0 {
+		return flags, nil
+	}
+
+	err := flagSet.Parse(args)
+	if err != nil {
+		return flags, err
+	}
 
 	return flags, nil
 }
@@ -173,33 +182,110 @@ func generateSolutionFile(challenge Challenge, flags Flags) error {
 	return err
 }
 
-func callOllamaAPI(apiURL, model string, messages []Message) (map[string]interface{}, error) {
+func callOllamaAPI(apiURL, model, prompt string) (string, error) {
 	requestBody, err := json.Marshal(map[string]interface{}{
-		"model":    model,
-		"messages": messages,
+		"model":  model,
+		"prompt": prompt,
 	})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	var result map[string]interface{}
 	err = json.Unmarshal(body, &result)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return result, nil
+	response, ok := result["response"].(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	return response, nil
+}
+
+func callOpenAIAPI(apiURL, model, prompt string) (string, error) {
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("OPENAI_API_KEY"))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResponse struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(body, &errorResponse); err != nil {
+			return "", fmt.Errorf("API error: %s", resp.Status)
+		}
+		return "", fmt.Errorf("API error: %s (%s)", errorResponse.Error.Message, errorResponse.Error.Type)
+	}
+
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return "", err
+	}
+
+	choices, ok := result["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	firstChoice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	message, ok := firstChoice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	return content, nil
 }
 
 func generateCodeWithAI(challenge Challenge, flags Flags) (string, error) {
@@ -226,17 +312,51 @@ Respond only with the code surrounded by triple backticks and the language name,
 # Your code here
 %s`, flags.Lang, challenge.Task, "```"+flags.Lang, "```")
 
-	messages := []Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: prompt},
-	}
-
-	var result map[string]interface{}
+	var result string
 	var err error
 
-	if strings.HasPrefix(flags.Model, "ollama/") {
-		result, err = callOllamaAPI(flags.ModelAPI, strings.TrimPrefix(flags.Model, "ollama/"), messages)
-	} else {
+	switch {
+	case strings.HasPrefix(flags.Model, "gpt-"):
+		result, err = callOpenAIAPI(flags.ModelAPI, flags.Model, prompt)
+	case strings.HasPrefix(flags.Model, "ollama/"):
+		messages := []map[string]string{
+			{"role": "system", "content": "You are a helpful AI assistant that generates code solutions."},
+			{"role": "user", "content": fmt.Sprintf("Generate a %s solution for this Advent of Code challenge:\n\n%s", flags.Lang, challenge.Task)},
+		}
+
+		requestBody := map[string]interface{}{
+			"model":    strings.TrimPrefix(flags.Model, "ollama/"),
+			"messages": messages,
+		}
+
+		requestBodyBytes, err := json.Marshal(requestBody)
+		if err != nil {
+			return "", err
+		}
+
+		resp, err := http.Post(flags.ModelAPI, "application/json", bytes.NewBuffer(requestBodyBytes))
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		var response map[string]interface{}
+		err = json.Unmarshal(body, &response)
+		if err != nil {
+			return "", err
+		}
+
+		result, ok := response["response"].(string)
+		if !ok {
+			return "", fmt.Errorf("unexpected response format")
+		}
+		return result, nil
+	default:
 		return "", fmt.Errorf("unsupported model provider: %s", flags.Model)
 	}
 
@@ -244,18 +364,9 @@ Respond only with the code surrounded by triple backticks and the language name,
 		return "", err
 	}
 
-	content, ok := result["response"].(string)
-	if !ok {
-		return "", fmt.Errorf("content is not a string")
-	}
-
-	if content == "" {
-		return "", fmt.Errorf("received empty response from API")
-	}
-
-	// Extract code from the response
+	// Extract code from the result
 	re := regexp.MustCompile("```(?:.*\n)?([\\s\\S]*?)```")
-	matches := re.FindStringSubmatch(content)
+	matches := re.FindStringSubmatch(result)
 	if len(matches) < 2 {
 		return "", fmt.Errorf("no code found in the response")
 	}
@@ -289,18 +400,6 @@ func findChallenge(challenges []Challenge, flags Flags) (Challenge, error) {
 	return Challenge{}, fmt.Errorf("challenge not found: %s", name)
 }
 
-func parseGenerateFlags() (Flags, error) {
-	flags := Flags{}
-	flag.IntVar(&flags.Day, "day", 0, "Day of the challenge")
-	flag.IntVar(&flags.Part, "part", 0, "Part of the challenge")
-	flag.IntVar(&flags.Year, "year", 0, "Year of the challenge")
-	flag.StringVar(&flags.Lang, "lang", "", "Programming language for the solution")
-	flag.StringVar(&flags.Model, "model", "", "AI model to use")
-	flag.StringVar(&flags.ModelAPI, "model_api", "", "API endpoint for the AI model")
-	flag.Parse()
-	return flags, nil
-}
-
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
@@ -314,7 +413,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "generate":
-		flags, err := parseFlags()
+		flags, err := parseFlags(os.Args[2:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 			os.Exit(1)
@@ -324,9 +423,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "download":
-		// Shift os.Args to remove the "download" subcommand
-		os.Args = append(os.Args[:1], os.Args[2:]...)
-		flags, err := parseFlags()
+		flags, err := parseFlags(os.Args[2:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 			os.Exit(1)
@@ -336,7 +433,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "eval":
-		flags, err := parseFlags()
+		flags, err := parseFlags(os.Args[2:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 			os.Exit(1)
@@ -496,22 +593,34 @@ func saveChallenges(filename string, challenges []Challenge) error {
 }
 
 func runGenerateCommand(flags Flags) error {
+	return generateSolution(flags)
+}
+
+func generateSolution(flags Flags) error {
+	challengeName := fmt.Sprintf("day%d_part%d_%d", flags.Day, flags.Part, flags.Year)
 	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
 
-	challenge, err := findChallenge(challenges, flags)
-	if err != nil {
-		return fmt.Errorf("error finding challenge: %v", err)
+	var challenge *Challenge
+	for i, c := range challenges {
+		if c.Name == challengeName {
+			challenge = &challenges[i]
+			break
+		}
 	}
 
-	err = createInputFile(challenge)
+	if challenge == nil {
+		return fmt.Errorf("challenge not found: %s", challengeName)
+	}
+
+	err = createInputFile(*challenge)
 	if err != nil {
 		return fmt.Errorf("error creating input file: %v", err)
 	}
 
-	err = generateSolutionFile(challenge, flags)
+	err = generateSolutionFile(*challenge, flags)
 	if err != nil {
 		return fmt.Errorf("error generating solution file: %v", err)
 	}
