@@ -754,6 +754,17 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 }
 
 func TestGenerateSolutionFileOllama(t *testing.T) {
+	// Load the .env file
+	err := godotenv.Load()
+	if err != nil {
+		t.Fatalf("Error loading .env file: %v", err)
+	}
+
+	// Check if SKIP_OLLAMA_TESTS is set
+	if os.Getenv("SKIP_OLLAMA_TESTS") != "" {
+		t.Skip("Skipping Ollama test: SKIP_OLLAMA_TESTS is set")
+	}
+
 	challenge := Challenge{
 		Name:  "day1_part1_2015",
 		Input: "test input",
@@ -835,9 +846,5 @@ func isValidPythonCode(code string) bool {
 	}
 
 	// Check if the code contains 'input.txt'
-	if strings.Contains(code, "input.txt") {
-		return true
-	}
-
-	return false
+	return strings.Contains(code, "input.txt")
 }
