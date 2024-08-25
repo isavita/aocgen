@@ -81,7 +81,9 @@ func parseFlags() (Flags, error) {
 	flag.StringVar(&flags.Lang, "lang", "", "Programming language for the solution")
 	flag.StringVar(&flags.Model, "model", "", "AI model to use")
 	flag.StringVar(&flags.ModelAPI, "model_api", "", "API endpoint for the AI model")
+	flag.StringVar(&flags.Session, "session", "", "Session token for Advent of Code")
 	flag.Parse()
+
 	return flags, nil
 }
 
@@ -300,39 +302,45 @@ func parseGenerateFlags() (Flags, error) {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "list" {
-		err := ListChallenges()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Parse flags for other commands
-	flags, err := parseFlags()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
-		os.Exit(1)
-	}
-
 	if len(os.Args) < 2 {
 		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
 		os.Exit(1)
 	}
 
 	switch os.Args[1] {
+	case "list":
+		if err := ListChallenges(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "generate":
+		flags, err := parseFlags()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+			os.Exit(1)
+		}
 		if err := runGenerateCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "download":
+		// Shift os.Args to remove the "download" subcommand
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+		flags, err := parseFlags()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+			os.Exit(1)
+		}
 		if err := runDownloadCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "eval":
+		flags, err := parseFlags()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+			os.Exit(1)
+		}
 		if err := runEvaluationCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -346,6 +354,10 @@ func main() {
 		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
 		os.Exit(1)
 	}
+}
+
+func runDownloadCommand(flags Flags) error {
+	return downloadChallenge(flags)
 }
 
 func downloadChallenge(flags Flags) error {
@@ -508,10 +520,33 @@ func runGenerateCommand(flags Flags) error {
 	return nil
 }
 
-func runDownloadCommand(flags Flags) error {
-	err := downloadChallenge(flags)
+func runEvaluationCommand(flags Flags) error {
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
-		return fmt.Errorf("error downloading challenge: %v", err)
+		return fmt.Errorf("error loading challenges: %v", err)
+	}
+
+	challenge, err := findChallenge(challenges, flags)
+	if err != nil {
+		return fmt.Errorf("error finding challenge: %v", err)
+	}
+
+	ext, err := getFileExtension(flags.Lang)
+	if err != nil {
+		return fmt.Errorf("error getting file extension: %v", err)
+	}
+
+	solutionPath := fmt.Sprintf("day%d_part%d_%d.%s", flags.Day, flags.Part, flags.Year, ext)
+
+	correct, err := evaluateSolution(challenge, solutionPath, flags.Lang, 20*time.Second)
+	if err != nil {
+		return fmt.Errorf("error evaluating solution: %v", err)
+	}
+
+	if correct {
+		fmt.Println("Solution is correct!")
+	} else {
+		fmt.Println("Solution is incorrect.")
 	}
 
 	return nil
@@ -554,38 +589,6 @@ func evaluateSolution(challenge Challenge, solutionPath string, lang string, tim
 
 	output := outBuf.String()
 	return validSolution(output, challenge.Answer), nil
-}
-
-func runEvaluationCommand(flags Flags) error {
-	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
-	if err != nil {
-		return fmt.Errorf("error loading challenges: %v", err)
-	}
-
-	challenge, err := findChallenge(challenges, flags)
-	if err != nil {
-		return fmt.Errorf("error finding challenge: %v", err)
-	}
-
-	ext, err := getFileExtension(flags.Lang)
-	if err != nil {
-		return fmt.Errorf("error getting file extension: %v", err)
-	}
-
-	solutionPath := fmt.Sprintf("day%d_part%d_%d.%s", flags.Day, flags.Part, flags.Year, ext)
-
-	correct, err := evaluateSolution(challenge, solutionPath, flags.Lang, 20*time.Second)
-	if err != nil {
-		return fmt.Errorf("error evaluating solution: %v", err)
-	}
-
-	if correct {
-		fmt.Println("Solution is correct!")
-	} else {
-		fmt.Println("Solution is incorrect.")
-	}
-
-	return nil
 }
 
 func validSolution(result, answer string) bool {

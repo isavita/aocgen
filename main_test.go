@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -575,14 +576,7 @@ func TestRealDownloadChallenge(t *testing.T) {
 }
 
 func TestListChallenges(t *testing.T) {
-	// Create a temporary directory for the test
-	tempDir, err := os.MkdirTemp("", "aocgen_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create a test challenges file
+	// Create test challenges
 	testChallenges := []Challenge{
 		{Name: "day1_part1_2022", SolutionLang: "python"},
 		{Name: "day1_part1_2022", SolutionLang: "go"},
@@ -590,8 +584,12 @@ func TestListChallenges(t *testing.T) {
 		{Name: "day3_part1_2022", SolutionLang: ""},
 	}
 
-	testFile := filepath.Join(tempDir, "challenges.json")
-	data, _ := json.Marshal(testChallenges)
+	// Write test challenges to file
+	testFile := filepath.Join(getCacheDir(), "challenges.json")
+	data, err := json.Marshal(testChallenges)
+	if err != nil {
+		t.Fatalf("Failed to marshal test challenges: %v", err)
+	}
 	err = os.WriteFile(testFile, data, 0644)
 	if err != nil {
 		t.Fatalf("Failed to write test data: %v", err)
@@ -602,14 +600,6 @@ func TestListChallenges(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	// Save the original getCacheDir function and replace it with a test version
-	oldGetCacheDir := getCacheDir
-	getCacheDir = func() string { return tempDir }
-	defer func() {
-		getCacheDir = oldGetCacheDir
-		os.Stdout = oldStdout
-	}()
-
 	// Call ListChallenges
 	err = ListChallenges()
 	if err != nil {
@@ -618,6 +608,7 @@ func TestListChallenges(t *testing.T) {
 
 	// Restore stdout and get output
 	w.Close()
+	os.Stdout = oldStdout
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	output := buf.String()
@@ -634,13 +625,29 @@ day3_part1_2022 unsolved
 }
 
 func TestMain(m *testing.M) {
+	// Create a temporary directory for test data
+	tempDir, err := os.MkdirTemp("", "aocgen_test")
+	if err != nil {
+		fmt.Printf("Failed to create temp directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Save the original getCacheDir function
+	originalGetCacheDir := getCacheDir
+
+	// Override getCacheDir for tests
+	getCacheDir = func() string {
+		return tempDir
+	}
+
 	// Run tests
 	code := m.Run()
 
-	// Cleanup: remove any test data from the main application's data
-	homeDir, _ := os.UserHomeDir()
-	mainCacheDir := filepath.Join(homeDir, ".aocgen")
-	os.RemoveAll(mainCacheDir)
+	// Restore the original getCacheDir function
+	getCacheDir = originalGetCacheDir
+
+	// Clean up
+	os.RemoveAll(tempDir)
 
 	os.Exit(code)
 }
