@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -359,7 +361,7 @@ func TestDownloadChallenge(t *testing.T) {
 				t.Fatalf("Failed to download challenge: %v", err)
 			}
 
-			challenges, err := loadChallenges(cacheDir, "challenges.json")
+			challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 			if err != nil {
 				t.Fatalf("Failed to load challenges: %v", err)
 			}
@@ -460,7 +462,7 @@ func TestDownloadChallengeWithAnswers(t *testing.T) {
 				t.Fatalf("Failed to download challenge: %v", err)
 			}
 
-			challenges, err := loadChallenges(cacheDir, "challenges.json")
+			challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 			if err != nil {
 				t.Fatalf("Failed to load challenges: %v", err)
 			}
@@ -539,7 +541,7 @@ func TestRealDownloadChallenge(t *testing.T) {
 			}
 
 			// Load the challenge from the file to check its contents
-			challenges, err := loadChallenges("aocgen_cache", "challenges.json")
+			challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 			if err != nil {
 				t.Fatalf("Failed to load challenges: %v", err)
 			}
@@ -570,4 +572,75 @@ func TestRealDownloadChallenge(t *testing.T) {
 			t.Logf("Successfully downloaded and saved %s", tc.expectedFile)
 		})
 	}
+}
+
+func TestListChallenges(t *testing.T) {
+	// Create a temporary directory for the test
+	tempDir, err := os.MkdirTemp("", "aocgen_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a test challenges file
+	testChallenges := []Challenge{
+		{Name: "day1_part1_2022", SolutionLang: "python"},
+		{Name: "day1_part1_2022", SolutionLang: "go"},
+		{Name: "day2_part1_2022", SolutionLang: "python"},
+		{Name: "day3_part1_2022", SolutionLang: ""},
+	}
+
+	testFile := filepath.Join(tempDir, "challenges.json")
+	data, _ := json.Marshal(testChallenges)
+	err = os.WriteFile(testFile, data, 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test data: %v", err)
+	}
+
+	// Redirect stdout to capture output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	// Save the original getCacheDir function and replace it with a test version
+	oldGetCacheDir := getCacheDir
+	getCacheDir = func() string { return tempDir }
+	defer func() {
+		getCacheDir = oldGetCacheDir
+		os.Stdout = oldStdout
+	}()
+
+	// Call ListChallenges
+	err = ListChallenges()
+	if err != nil {
+		t.Fatalf("ListChallenges failed: %v", err)
+	}
+
+	// Restore stdout and get output
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	expectedOutput := `day1_part1_2022 go
+day1_part1_2022 python
+day2_part1_2022 python
+day3_part1_2022 unsolved
+`
+
+	if output != expectedOutput {
+		t.Errorf("Unexpected output.\nExpected:\n%s\nGot:\n%s", expectedOutput, output)
+	}
+}
+
+func TestMain(m *testing.M) {
+	// Run tests
+	code := m.Run()
+
+	// Cleanup: remove any test data from the main application's data
+	homeDir, _ := os.UserHomeDir()
+	mainCacheDir := filepath.Join(homeDir, ".aocgen")
+	os.RemoveAll(mainCacheDir)
+
+	os.Exit(code)
 }

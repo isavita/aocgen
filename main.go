@@ -49,16 +49,25 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-var cacheDir = "aocgen_cache"
+var getCacheDir func() string
 
 const challengesFile = "challenges.json"
 const datasetParquet = "dataset.parquet"
 const datasetURL = "https://huggingface.co/datasets/isavita/advent-of-code/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
 
 func init() {
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		fmt.Printf("Failed to create cache directory: %v\n", err)
-		os.Exit(1)
+	getCacheDir = func() string {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Printf("Error getting user home directory: %v\n", err)
+			os.Exit(1)
+		}
+		cacheDir := filepath.Join(homeDir, ".aocgen")
+		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+			fmt.Printf("Failed to create cache directory: %v\n", err)
+			os.Exit(1)
+		}
+		return cacheDir
 	}
 }
 
@@ -291,62 +300,40 @@ func parseGenerateFlags() (Flags, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "list" {
+		err := ListChallenges()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Parse flags for other commands
+	flags, err := parseFlags()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+		os.Exit(1)
+	}
+
 	if len(os.Args) < 2 {
 		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
 		os.Exit(1)
 	}
 
-	downloadCmd := flag.NewFlagSet("download", flag.ExitOnError)
-	downloadDay := downloadCmd.Int("day", 0, "Day of the challenge")
-	downloadYear := downloadCmd.Int("year", 0, "Year of the challenge")
-	downloadSession := downloadCmd.String("session", "", "Session token for Advent of Code")
-
 	switch os.Args[1] {
 	case "generate":
-		flags, err := parseGenerateFlags()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
-			os.Exit(1)
-		}
 		if err := runGenerateCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-
 	case "download":
-		downloadCmd.Parse(os.Args[2:])
-		flags := Flags{
-			Day:     *downloadDay,
-			Year:    *downloadYear,
-			Session: *downloadSession,
-		}
 		if err := runDownloadCommand(flags); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-
 	case "eval":
-		evalCmd := flag.NewFlagSet("eval", flag.ExitOnError)
-		day := evalCmd.Int("day", 0, "Day of the challenge")
-		part := evalCmd.Int("part", 0, "Part of the challenge")
-		year := evalCmd.Int("year", 0, "Year of the challenge")
-		lang := evalCmd.String("lang", "", "Programming language of the solution")
-
-		evalCmd.Parse(os.Args[2:])
-
-		flags := Flags{
-			Day:  *day,
-			Part: *part,
-			Year: *year,
-			Lang: *lang,
-		}
-
 		if err := runEvaluationCommand(flags); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-	case "list":
-		if err := listChallenges(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -356,7 +343,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Println("Expected 'generate', 'download' or 'eval' subcommands")
+		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
 		os.Exit(1)
 	}
 }
@@ -440,7 +427,7 @@ func downloadChallenge(flags Flags) error {
 	}
 
 	// Save the challenge to the JSON file
-	challenges, err := loadChallenges(cacheDir, "challenges.json")
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
 		challenges = []Challenge{}
 	}
@@ -493,11 +480,11 @@ func saveChallenges(filename string, challenges []Challenge) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(cacheDir, filename), data, 0644)
+	return os.WriteFile(filepath.Join(getCacheDir(), filename), data, 0644)
 }
 
 func runGenerateCommand(flags Flags) error {
-	challenges, err := loadChallenges(cacheDir, "challenges.json")
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
@@ -570,7 +557,7 @@ func evaluateSolution(challenge Challenge, solutionPath string, lang string, tim
 }
 
 func runEvaluationCommand(flags Flags) error {
-	challenges, err := loadChallenges(cacheDir, "challenges.json")
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
 		return fmt.Errorf("error loading challenges: %v", err)
 	}
@@ -637,10 +624,19 @@ func validSolution(result, answer string) bool {
 	return false
 }
 
-func listChallenges() error {
-	challenges, err := loadChallenges(cacheDir, "challenges.json")
+func ListChallenges() error {
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("No challenges found. Use the 'download' command to get some challenges.")
+			return nil
+		}
 		return fmt.Errorf("error loading challenges: %v", err)
+	}
+
+	if len(challenges) == 0 {
+		fmt.Println("No challenges found. Use the 'download' command to get some challenges.")
+		return nil
 	}
 
 	// Create a map to store challenges with their languages
@@ -676,12 +672,12 @@ func listChallenges() error {
 
 func setupDataset() error {
 	fmt.Println("Downloading dataset...")
-	if err := downloadFile(filepath.Join(cacheDir, datasetParquet), datasetURL); err != nil {
+	if err := downloadFile(filepath.Join(getCacheDir(), datasetParquet), datasetURL); err != nil {
 		return fmt.Errorf("error downloading dataset: %v", err)
 	}
 
 	fmt.Println("Processing dataset...")
-	challenges, err := processParquetFile(filepath.Join(cacheDir, datasetParquet))
+	challenges, err := processParquetFile(filepath.Join(getCacheDir(), datasetParquet))
 	if err != nil {
 		return fmt.Errorf("error processing dataset: %v", err)
 	}
