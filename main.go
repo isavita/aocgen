@@ -521,7 +521,13 @@ func downloadChallenge(flags Flags) error {
 	}
 
 	// Process the challenge description
-	taskPartOne, taskPartTwo := cleanTaskDescription(string(descBody))
+	taskPartOne, taskPartTwo := cleanTaskDescription(string(descBody), flags, client)
+
+	// Combine Part 1 and Part 2 for the task field
+	task := taskPartOne
+	if flags.Part == 2 {
+		task = taskPartOne + "\n\n" + taskPartTwo
+	}
 
 	// Download input
 	inputURL := fmt.Sprintf("%s/%d/day/%d/input", aocBaseURL, flags.Year, flags.Day)
@@ -544,12 +550,6 @@ func downloadChallenge(flags Flags) error {
 	inputBody, err := io.ReadAll(inputResp.Body)
 	if err != nil {
 		return err
-	}
-
-	// Combine Part 1 and Part 2 for the task field if it's Part 2
-	task := taskPartOne
-	if flags.Part == 2 {
-		task = taskPartOne + "\n\n" + taskPartTwo
 	}
 
 	challenge = Challenge{
@@ -585,7 +585,7 @@ func downloadChallenge(flags Flags) error {
 	return nil
 }
 
-func cleanTaskDescription(htmlContent string) (string, string) {
+func cleanTaskDescription(htmlContent string, flags Flags, client *http.Client) (string, string) {
 	re := regexp.MustCompile(`(?s)<article class="day-desc">(.*?)</article>`)
 	matches := re.FindAllStringSubmatch(htmlContent, -1)
 
@@ -595,21 +595,70 @@ func cleanTaskDescription(htmlContent string) (string, string) {
 		fullContent := stripTags(matches[0][1])
 		fullContent = html.UnescapeString(fullContent)
 
-		// Remove "Your puzzle answer was" and everything after it
-		fullContent = regexp.MustCompile(`Your puzzle answer was.*`).ReplaceAllString(fullContent, "")
-
+		// Remove "Your puzzle answer was" and everything after it from Part 1
 		parts := strings.Split(fullContent, "--- Part Two ---")
+		partOne = regexp.MustCompile(`Your puzzle answer was.*`).ReplaceAllString(parts[0], "")
+		partOne = strings.TrimSpace(partOne)
 
-		partOne = strings.TrimSpace(parts[0])
 		// Add a newline after the title (after the second ---)
 		partOne = regexp.MustCompile(`(--- .* ---)(.*)`).ReplaceAllString(partOne, "$1\n$2")
 
 		if len(parts) > 1 {
 			partTwo = "--- Part Two ---\n" + strings.TrimSpace(parts[1])
+			// Remove "Your puzzle answer was" and everything after it from Part 2
+			partTwo = regexp.MustCompile(`Your puzzle answer was.*`).ReplaceAllString(partTwo, "")
+		} else if flags.Part == 2 {
+			// If Part Two is not found in the initial HTML, fetch it separately
+			partTwo = fetchPartTwo(flags, client)
+		}
+
+		// Add a newline after "--- Part Two ---" if it exists
+		if strings.HasPrefix(partTwo, "--- Part Two ---") {
+			partTwo = strings.Replace(partTwo, "--- Part Two ---", "--- Part Two ---\n", 1)
 		}
 	}
 
 	return partOne, partTwo
+}
+
+func fetchPartTwo(flags Flags, client *http.Client) string {
+	descURL := fmt.Sprintf("%s/%d/day/%d", aocBaseURL, flags.Year, flags.Day)
+	descReq, err := http.NewRequest("GET", descURL, nil)
+	if err != nil {
+		fmt.Printf("Error creating request for Part Two: %v\n", err)
+		return ""
+	}
+	descReq.AddCookie(&http.Cookie{Name: "session", Value: flags.Session})
+
+	descResp, err := client.Do(descReq)
+	if err != nil {
+		fmt.Printf("Error fetching Part Two: %v\n", err)
+		return ""
+	}
+	defer descResp.Body.Close()
+
+	if descResp.StatusCode != http.StatusOK {
+		fmt.Printf("Failed to download Part Two description: %s\n", descResp.Status)
+		return ""
+	}
+
+	descBody, err := io.ReadAll(descResp.Body)
+	if err != nil {
+		fmt.Printf("Error reading Part Two response: %v\n", err)
+		return ""
+	}
+
+	re := regexp.MustCompile(`(?s)<article class="day-desc">(.*?)</article>`)
+	matches := re.FindAllStringSubmatch(string(descBody), -1)
+
+	if len(matches) > 1 && len(matches[1]) > 1 {
+		partTwo := stripTags(matches[1][1])
+		partTwo = html.UnescapeString(partTwo)
+		partTwo = regexp.MustCompile(`Your puzzle answer was.*`).ReplaceAllString(partTwo, "")
+		return strings.TrimSpace(partTwo)
+	}
+
+	return ""
 }
 
 func stripTags(htmlContent string) string {
