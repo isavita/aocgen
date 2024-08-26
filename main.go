@@ -50,23 +50,26 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-var baseCacheDir string
+var getCacheDirFunc = defaultGetCacheDir
+var saveChallenges = defaultSaveChallenges
 
-func init() {
+func getCacheDir() string {
+	return getCacheDirFunc()
+}
+
+func defaultGetCacheDir() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatal(err)
 	}
-	baseCacheDir = filepath.Join(homeDir, ".aocgen")
+	return filepath.Join(homeDir, ".aocgen")
 }
 
-func getCacheDir() string {
-	return baseCacheDir
-}
-
-// Add this function to allow tests to set a custom cache directory
-func setBaseCacheDir(dir string) {
-	baseCacheDir = dir
+// Add this function to allow overriding getCacheDir in tests
+func setGetCacheDir(f func() string) func() {
+	old := getCacheDirFunc
+	getCacheDirFunc = f
+	return func() { getCacheDirFunc = old }
 }
 
 const challengesFile = "challenges.json"
@@ -576,7 +579,7 @@ func downloadChallenge(flags Flags) error {
 	}
 
 	challenges = append(challenges, challenge)
-	err = saveChallenges("challenges.json", challenges)
+	err = saveChallenges(challenges)
 	if err != nil {
 		return fmt.Errorf("error saving challenge: %v", err)
 	}
@@ -655,7 +658,14 @@ func fetchPartTwo(flags Flags, client *http.Client) string {
 		partTwo := stripTags(matches[1][1])
 		partTwo = html.UnescapeString(partTwo)
 		partTwo = regexp.MustCompile(`Your puzzle answer was.*`).ReplaceAllString(partTwo, "")
-		return strings.TrimSpace(partTwo)
+		partTwo = strings.TrimSpace(partTwo)
+
+		// Add a newline after "--- Part Two ---" if it exists
+		if strings.HasPrefix(partTwo, "--- Part Two ---") {
+			partTwo = strings.Replace(partTwo, "--- Part Two ---", "--- Part Two ---\n", 1)
+		}
+
+		return partTwo
 	}
 
 	return ""
@@ -666,19 +676,12 @@ func stripTags(htmlContent string) string {
 	return re.ReplaceAllString(htmlContent, "")
 }
 
-func saveChallenges(filename string, challenges []Challenge) error {
-	data, err := json.MarshalIndent(challenges, "", "  ")
+func defaultSaveChallenges(challenges []Challenge) error {
+	data, err := json.Marshal(challenges)
 	if err != nil {
 		return err
 	}
-
-	cacheDir := getCacheDir()
-	err = os.MkdirAll(cacheDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create cache directory: %v", err)
-	}
-
-	return os.WriteFile(filepath.Join(cacheDir, filename), data, 0644)
+	return os.WriteFile(filepath.Join(getCacheDir(), "challenges.json"), data, 0644)
 }
 
 func runGenerateCommand(flags Flags) error {
@@ -865,7 +868,7 @@ func setupDataset() error {
 	}
 
 	fmt.Println("Saving challenges...")
-	if err := saveChallenges(challengesFile, challenges); err != nil {
+	if err := saveChallenges(challenges); err != nil {
 		return fmt.Errorf("error saving challenges: %v", err)
 	}
 
