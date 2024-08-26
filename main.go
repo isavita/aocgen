@@ -701,79 +701,60 @@ func runEvaluationCommand(flags Flags) error {
 	return nil
 }
 
-func evaluateSolution(challenge Challenge, solutionPath string, lang string, timeout time.Duration) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	var cmd *exec.Cmd
-	switch lang {
-	case "python":
-		cmd = exec.CommandContext(ctx, "python", solutionPath)
-	case "javascript":
-		cmd = exec.CommandContext(ctx, "node", solutionPath)
-	case "ruby":
-		cmd = exec.CommandContext(ctx, "ruby", solutionPath)
-	case "go":
-		cmd = exec.CommandContext(ctx, "go", "run", solutionPath)
-	case "java":
-		cmd = exec.CommandContext(ctx, "java", solutionPath)
-	case "elixir":
-		cmd = exec.CommandContext(ctx, "elixir", solutionPath)
-	// Add more cases for other languages as needed
-	default:
-		return false, fmt.Errorf("unsupported language for execution: %s", lang)
+func evaluateSolution(challenge Challenge, filename string, lang string, timeout time.Duration) (bool, error) {
+	cmd := getCommand(lang, filename)
+	if cmd == nil {
+		return false, fmt.Errorf("unsupported language: %s", lang)
 	}
 
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
 
-	err := cmd.Run()
+	err := cmd.Start()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return false, fmt.Errorf("execution timed out after %v", timeout)
-		}
-		return false, fmt.Errorf("execution failed: %v\nStderr: %s", err, errBuf.String())
+		return false, fmt.Errorf("failed to start command: %v", err)
 	}
 
-	output := outBuf.String()
-	return validSolution(output, challenge.Answer), nil
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-time.After(timeout):
+		if err := cmd.Process.Kill(); err != nil {
+			return false, fmt.Errorf("failed to kill process: %v", err)
+		}
+		return false, fmt.Errorf("process killed as timeout reached")
+	case err := <-done:
+		if err != nil {
+			return false, fmt.Errorf("process finished with error: %v", err)
+		}
+	}
+
+	output := out.String()
+	return strings.Contains(output, challenge.Answer), nil
 }
 
-func validSolution(result, answer string) bool {
-	if strings.Contains(result, answer) {
-		return true
+func getCommand(lang, filename string) *exec.Cmd {
+	switch lang {
+	case "python":
+		return exec.Command("python", filename)
+	case "javascript":
+		return exec.Command("node", filename)
+	case "ruby":
+		return exec.Command("ruby", filename)
+	case "go":
+		return exec.Command("go", "run", filename)
+	case "java":
+		return exec.Command("java", filename)
+	case "elixir":
+		return exec.Command("elixir", filename)
+	// Add more cases for other languages as needed
+	default:
+		return nil
 	}
-
-	// Check for ASCII art answers
-	asciiPatterns := []string{
-		".##..####.###..#..#.###..####.###....##.###...###.",
-		" ##  #### ###  #  # ###  #### ###    ## ###   ### ",
-		"#....#..#....#.....###..######....##....#....#....##....######",
-		"#    #  #    #     ###  ######    ##    #    #    ##    ######",
-		"####.###..####.#..#.###..\n#....#..#....#.#..#.#..#.",
-		"#### ###  #### #  # ###  \n#    #  #    # #  # #  # ",
-		"..#....###....##.#..#.####.#..#.#....#..#.\n",
-		" #    ###    ## #  # #### #  # #    #  # \n",
-		" █    ███    ██ █  █ ████ █  █ █    █  █ \n",
-		"#..#.#..#.#..#.#..#.#..#.#..#.#..#....#",
-		"#  # #  # #  # #  # #  # #  # #  #    #",
-		"###..###..###...##..###...##...##..####.",
-		"###  ###  ###   ##  ###   ##   ##  #### ",
-	}
-
-	for _, pattern := range asciiPatterns {
-		if strings.Contains(result, pattern) {
-			return true
-		}
-	}
-
-	// Check for specific numeric formats
-	if strings.Contains(result, "3.465154e+06") || strings.Contains(result, "3.465154e+6") {
-		return true
-	}
-
-	return false
 }
 
 func ListChallenges() error {

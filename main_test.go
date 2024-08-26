@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -784,77 +785,97 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 	os.Remove(filename)
 }
 
-func isValidPythonCode(code string) bool {
-	// This is a very basic check. You might want to improve it.
-	return strings.Contains(code, "def") || strings.Contains(code, "print") || strings.Contains(code, "import")
-}
-
-func TestGenerateSolutionFileOllama(t *testing.T) {
-	// Load the .env file
-	err := godotenv.Load()
-	if err != nil {
-		t.Fatalf("Error loading .env file: %v", err)
+func TestEvaluateSolutionMultiLanguage(t *testing.T) {
+	tests := []struct {
+		name           string
+		lang           string
+		code           string
+		expectedOutput string
+		expectedResult bool
+	}{
+		{
+			name:           "Python correct solution",
+			lang:           "python",
+			code:           "print('The answer is:', 40+2)",
+			expectedOutput: "42",
+			expectedResult: true,
+		},
+		{
+			name:           "Ruby correct solution",
+			lang:           "ruby",
+			code:           "puts 'Result: ' + (40+2).to_s",
+			expectedOutput: "42",
+			expectedResult: true,
+		},
+		{
+			name:           "JavaScript correct solution",
+			lang:           "javascript",
+			code:           "console.log('The sum is:', 40+2)",
+			expectedOutput: "42",
+			expectedResult: true,
+		},
+		{
+			name:           "Go correct solution",
+			lang:           "go",
+			code:           "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Answer:\", 40+2)\n}",
+			expectedOutput: "42",
+			expectedResult: true,
+		},
+		{
+			name:           "Python incorrect solution",
+			lang:           "python",
+			code:           "print('The answer is:', 40+3)",
+			expectedOutput: "42",
+			expectedResult: false,
+		},
 	}
 
-	// Check if SKIP_OLLAMA_TESTS is set
-	if os.Getenv("SKIP_OLLAMA_TESTS") != "" {
-		t.Skip("Skipping Ollama test: SKIP_OLLAMA_TESTS is set")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a temporary directory for this test
+			tmpDir, err := os.MkdirTemp("", "aocgen_eval_test")
+			if err != nil {
+				t.Fatalf("Failed to create temp directory: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
 
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current working directory: %v", err)
-	}
-	defer os.Chdir(oldWd)
+			// Change to the temporary directory
+			oldWd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("Failed to get current working directory: %v", err)
+			}
+			defer os.Chdir(oldWd)
+			err = os.Chdir(tmpDir)
+			if err != nil {
+				t.Fatalf("Failed to change to temp directory: %v", err)
+			}
 
-	err = os.Chdir(getCacheDir())
-	if err != nil {
-		t.Fatalf("Failed to change to cache directory: %v", err)
-	}
+			// Create the solution file
+			ext, err := getFileExtension(tt.lang)
+			if err != nil {
+				t.Fatalf("Failed to get file extension for language %s: %v", tt.lang, err)
+			}
+			filename := fmt.Sprintf("solution.%s", ext)
+			err = os.WriteFile(filename, []byte(tt.code), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write solution file: %v", err)
+			}
 
-	challenge := Challenge{
-		Name:  "day1_part1_2015",
-		Input: "test input",
-		Task:  "Calculate the sum of digits that match the next digit in the circular list.",
-	}
-	flags := Flags{
-		Day:      1,
-		Part:     1,
-		Year:     2015,
-		Lang:     "python",
-		Model:    "ollama/mistral-nemo",
-		ModelAPI: "http://localhost:11434/v1/chat/completions",
-	}
+			// Create a mock challenge
+			challenge := Challenge{
+				Name:   "test_challenge",
+				Answer: tt.expectedOutput,
+			}
 
-	err = generateSolutionFile(challenge, flags)
-	if err != nil {
-		t.Fatalf("Failed to generate solution file: %v", err)
-	}
+			// Evaluate the solution
+			result, err := evaluateSolution(challenge, filename, tt.lang, 5*time.Second)
+			if err != nil {
+				t.Fatalf("Evaluation failed: %v", err)
+			}
 
-	// Check if file was created with correct extension
-	filename := "day1_part1_2015.py"
-	fileInfo, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		t.Errorf("Solution file was not created")
-	} else if err != nil {
-		t.Fatalf("Error checking file: %v", err)
+			if result != tt.expectedResult {
+				t.Errorf("Expected result %v, got %v", tt.expectedResult, result)
+			}
+		})
 	}
-
-	// Check if the file is not empty
-	if fileInfo.Size() == 0 {
-		t.Errorf("Generated file is empty")
-	}
-
-	// Read and verify the content
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-
-	if !isValidPythonCode(string(content)) {
-		t.Errorf("Generated content is not valid Python code:\n%s", string(content))
-	}
-
-	// Clean up
-	os.Remove(filename)
 }
