@@ -687,24 +687,24 @@ func runEvaluationCommand(flags Flags) error {
 
 	solutionPath := fmt.Sprintf("day%d_part%d_%d.%s", flags.Day, flags.Part, flags.Year, ext)
 
-	correct, err := evaluateSolution(challenge, solutionPath, flags.Lang, 20*time.Second)
+	correct, output, err := evaluateSolution(challenge, solutionPath, flags.Lang, 20*time.Second)
 	if err != nil {
 		return fmt.Errorf("error evaluating solution: %v", err)
 	}
 
 	if correct {
-		fmt.Println("Solution is correct!")
+		fmt.Printf("Solution is correct!\nOutput: %s\n", output)
 	} else {
-		fmt.Println("Solution is incorrect.")
+		fmt.Printf("Solution is incorrect.\nOutput: %s\n", output)
 	}
 
 	return nil
 }
 
-func evaluateSolution(challenge Challenge, filename string, lang string, timeout time.Duration) (bool, error) {
+func evaluateSolution(challenge Challenge, filename string, lang string, timeout time.Duration) (bool, string, error) {
 	cmd := getCommand(lang, filename)
 	if cmd == nil {
-		return false, fmt.Errorf("unsupported language: %s", lang)
+		return false, "", fmt.Errorf("unsupported language: %s", lang)
 	}
 
 	var out bytes.Buffer
@@ -713,7 +713,7 @@ func evaluateSolution(challenge Challenge, filename string, lang string, timeout
 
 	err := cmd.Start()
 	if err != nil {
-		return false, fmt.Errorf("failed to start command: %v", err)
+		return false, "", fmt.Errorf("failed to start command: %v", err)
 	}
 
 	done := make(chan error, 1)
@@ -724,17 +724,17 @@ func evaluateSolution(challenge Challenge, filename string, lang string, timeout
 	select {
 	case <-time.After(timeout):
 		if err := cmd.Process.Kill(); err != nil {
-			return false, fmt.Errorf("failed to kill process: %v", err)
+			return false, "", fmt.Errorf("failed to kill process: %v", err)
 		}
-		return false, fmt.Errorf("process killed as timeout reached")
+		return false, "", fmt.Errorf("process killed as timeout reached")
 	case err := <-done:
 		if err != nil {
-			return false, fmt.Errorf("process finished with error: %v", err)
+			return false, out.String(), fmt.Errorf("process finished with error: %v", err)
 		}
 	}
 
 	output := out.String()
-	return strings.Contains(output, challenge.Answer), nil
+	return strings.Contains(output, challenge.Answer), output, nil
 }
 
 func getCommand(lang, filename string) *exec.Cmd {

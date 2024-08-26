@@ -222,24 +222,24 @@ func TestEvaluateSolution(t *testing.T) {
 		Answer: "42",
 	}
 
-	correct, err := evaluateSolution(challenge, tmpfile.Name(), "python", 5*time.Second)
+	correct, output, err := evaluateSolution(challenge, tmpfile.Name(), "python", 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to evaluate solution: %v", err)
 	}
 
 	if !correct {
-		t.Errorf("Solution evaluation failed, expected correct solution")
+		t.Errorf("Solution evaluation failed, expected correct solution. Output: %s", output)
 	}
 
 	// Test incorrect solution
 	challenge.Answer = "24"
-	correct, err = evaluateSolution(challenge, tmpfile.Name(), "python", 5*time.Second)
+	correct, output, err = evaluateSolution(challenge, tmpfile.Name(), "python", 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to evaluate solution: %v", err)
 	}
 
 	if correct {
-		t.Errorf("Solution evaluation failed, expected incorrect solution")
+		t.Errorf("Solution evaluation failed, expected incorrect solution. Output: %s", output)
 	}
 }
 
@@ -367,6 +367,24 @@ func TestGenerateCodeWithAIOpenAI(t *testing.T) {
 }
 
 func TestDownloadChallenge(t *testing.T) {
+	// Create a temporary directory for the test
+	tempDir, err := os.MkdirTemp("", "aocgen_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to the temporary directory
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	err = os.Chdir(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
 	// Set up a mock server to simulate Advent of Code website
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessionCookie, err := r.Cookie("session")
@@ -398,7 +416,7 @@ func TestDownloadChallenge(t *testing.T) {
 
 	// Override getCacheDir function for this test
 	cacheDir := filepath.Join(getCacheDir(), "download_test")
-	err := os.MkdirAll(cacheDir, 0755)
+	err = os.MkdirAll(cacheDir, 0755)
 	if err != nil {
 		t.Fatalf("Failed to create cache directory: %v", err)
 	}
@@ -709,6 +727,115 @@ day3_part1_2022 unsolved
 	}
 }
 
+func TestEvaluateSolutionMultiLanguage(t *testing.T) {
+	tests := []struct {
+		name           string
+		lang           string
+		code           string
+		expectedAnswer string
+		expectedResult bool
+		expectedOutput string
+	}{
+		{
+			name:           "Python correct solution",
+			lang:           "python",
+			code:           "print('The answer is:', 40+2)",
+			expectedAnswer: "42",
+			expectedResult: true,
+			expectedOutput: "The answer is: 42",
+		},
+		{
+			name:           "Ruby correct solution",
+			lang:           "ruby",
+			code:           "puts 'Result: ' + (40+2).to_s",
+			expectedAnswer: "42",
+			expectedResult: true,
+			expectedOutput: "Result: 42",
+		},
+		{
+			name:           "JavaScript correct solution",
+			lang:           "javascript",
+			code:           "console.log('The sum is:', 40+2)",
+			expectedAnswer: "42",
+			expectedResult: true,
+			expectedOutput: "The sum is: 42",
+		},
+		{
+			name:           "Go correct solution",
+			lang:           "go",
+			code:           "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Answer:\", 40+2)\n}",
+			expectedAnswer: "42",
+			expectedResult: true,
+			expectedOutput: "Answer: 42",
+		},
+		{
+			name:           "Python incorrect solution",
+			lang:           "python",
+			code:           "print('The answer is:', 40+3)",
+			expectedAnswer: "42",
+			expectedResult: false,
+			expectedOutput: "The answer is: 43",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a temporary directory for this test
+			tmpDir, err := os.MkdirTemp("", "aocgen_eval_test")
+			if err != nil {
+				t.Fatalf("Failed to create temp directory: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			// Change to the temporary directory
+			oldWd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("Failed to get current working directory: %v", err)
+			}
+			defer os.Chdir(oldWd)
+			err = os.Chdir(tmpDir)
+			if err != nil {
+				t.Fatalf("Failed to change to temp directory: %v", err)
+			}
+
+			// Create the solution file
+			ext, err := getFileExtension(tt.lang)
+			if err != nil {
+				t.Fatalf("Failed to get file extension for language %s: %v", tt.lang, err)
+			}
+			filename := fmt.Sprintf("solution.%s", ext)
+			err = os.WriteFile(filename, []byte(tt.code), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write solution file: %v", err)
+			}
+
+			// Create a mock challenge
+			challenge := Challenge{
+				Name:   "test_challenge",
+				Answer: tt.expectedAnswer,
+			}
+
+			// Evaluate the solution
+			result, output, err := evaluateSolution(challenge, filename, tt.lang, 5*time.Second)
+			if err != nil {
+				t.Fatalf("Evaluation failed: %v", err)
+			}
+
+			if result != tt.expectedResult {
+				t.Errorf("Expected result %v, got %v. Output: %s", tt.expectedResult, result, output)
+			}
+
+			if !strings.Contains(output, tt.expectedOutput) {
+				t.Errorf("Output does not contain expected content. Output: %s, Expected content: %s", output, tt.expectedOutput)
+			}
+
+			if tt.expectedResult && !strings.Contains(output, tt.expectedAnswer) {
+				t.Errorf("Output does not contain expected answer. Output: %s, Expected answer: %s", output, tt.expectedAnswer)
+			}
+		})
+	}
+}
+
 func TestGenerateSolutionFileOpenAI(t *testing.T) {
 	// Load the .env file
 	err := godotenv.Load()
@@ -783,99 +910,4 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 
 	// Clean up
 	os.Remove(filename)
-}
-
-func TestEvaluateSolutionMultiLanguage(t *testing.T) {
-	tests := []struct {
-		name           string
-		lang           string
-		code           string
-		expectedOutput string
-		expectedResult bool
-	}{
-		{
-			name:           "Python correct solution",
-			lang:           "python",
-			code:           "print('The answer is:', 40+2)",
-			expectedOutput: "42",
-			expectedResult: true,
-		},
-		{
-			name:           "Ruby correct solution",
-			lang:           "ruby",
-			code:           "puts 'Result: ' + (40+2).to_s",
-			expectedOutput: "42",
-			expectedResult: true,
-		},
-		{
-			name:           "JavaScript correct solution",
-			lang:           "javascript",
-			code:           "console.log('The sum is:', 40+2)",
-			expectedOutput: "42",
-			expectedResult: true,
-		},
-		{
-			name:           "Go correct solution",
-			lang:           "go",
-			code:           "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Answer:\", 40+2)\n}",
-			expectedOutput: "42",
-			expectedResult: true,
-		},
-		{
-			name:           "Python incorrect solution",
-			lang:           "python",
-			code:           "print('The answer is:', 40+3)",
-			expectedOutput: "42",
-			expectedResult: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a temporary directory for this test
-			tmpDir, err := os.MkdirTemp("", "aocgen_eval_test")
-			if err != nil {
-				t.Fatalf("Failed to create temp directory: %v", err)
-			}
-			defer os.RemoveAll(tmpDir)
-
-			// Change to the temporary directory
-			oldWd, err := os.Getwd()
-			if err != nil {
-				t.Fatalf("Failed to get current working directory: %v", err)
-			}
-			defer os.Chdir(oldWd)
-			err = os.Chdir(tmpDir)
-			if err != nil {
-				t.Fatalf("Failed to change to temp directory: %v", err)
-			}
-
-			// Create the solution file
-			ext, err := getFileExtension(tt.lang)
-			if err != nil {
-				t.Fatalf("Failed to get file extension for language %s: %v", tt.lang, err)
-			}
-			filename := fmt.Sprintf("solution.%s", ext)
-			err = os.WriteFile(filename, []byte(tt.code), 0644)
-			if err != nil {
-				t.Fatalf("Failed to write solution file: %v", err)
-			}
-
-			// Create a mock challenge
-			challenge := Challenge{
-				Name:   "test_challenge",
-				Answer: tt.expectedOutput,
-			}
-
-			// Evaluate the solution
-			result, err := evaluateSolution(challenge, filename, tt.lang, 5*time.Second)
-			if err != nil {
-				t.Fatalf("Evaluation failed: %v", err)
-			}
-
-			if result != tt.expectedResult {
-				t.Errorf("Expected result %v, got %v", tt.expectedResult, result)
-			}
-		})
-	}
 }
