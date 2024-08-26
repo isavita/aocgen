@@ -386,6 +386,8 @@ if __name__ == '__main__':
 		}
 
 		return code, nil
+	case strings.HasPrefix(flags.Model, "groq/"):
+		result, err = callGroqAPI(flags.ModelAPI, strings.TrimPrefix(flags.Model, "groq/"), prompt)
 	default:
 		return "", fmt.Errorf("unsupported model provider: %s", flags.Model)
 	}
@@ -407,6 +409,69 @@ if __name__ == '__main__':
 	}
 
 	return code, nil
+}
+
+func callGroqAPI(apiURL, model, prompt string) (string, error) {
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("GROQ_API_KEY"))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API error: %s", resp.Status)
+	}
+
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return "", err
+	}
+
+	choices, ok := result["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	firstChoice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	message, ok := firstChoice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	return content, nil
 }
 
 func createInputFile(challenge Challenge) error {
