@@ -386,6 +386,67 @@ func TestGenerateCodeWithAIOpenAI(t *testing.T) {
 	}
 }
 
+func TestGenerateCodeWithAIGroq(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Load the .env file
+	err := godotenv.Load()
+	if err != nil {
+		t.Fatalf("Error loading .env file: %v", err)
+	}
+
+	// Check if SKIP_GROQ_TESTS is set
+	if os.Getenv("SKIP_GROQ_TESTS") != "" {
+		t.Skip("Skipping Groq test: SKIP_GROQ_TESTS is set")
+	}
+
+	// Check if GROQ_API_KEY is set
+	apiKey := os.Getenv("GROQ_API_KEY")
+	if apiKey == "" {
+		t.Skip("Skipping Groq test: GROQ_API_KEY not set")
+	}
+
+	challenge := Challenge{
+		Name: "day1_part1_2024",
+		Task: "Calculate the sum of all numbers in the input.",
+	}
+	flags := Flags{
+		Lang:     "python",
+		Model:    "groq/mixtral-8x7b-32768",
+		ModelAPI: "https://api.groq.com/openai/v1/chat/completions",
+	}
+
+	code, err := generateCodeWithAI(challenge, flags)
+	if err != nil {
+		t.Fatalf("Failed to generate code with AI: %v", err)
+	}
+
+	if code == "" {
+		t.Errorf("Generated code is empty")
+	}
+
+	if len(code) < 10 { // Arbitrary small number to ensure we got some content
+		t.Errorf("Generated code is suspiciously short: %s", code)
+	}
+
+	// Print the generated code for debugging purposes
+	t.Logf("Generated code:\n%s", code)
+
+	// Check if the generated code contains some expected Python keywords or functions
+	expectedKeywords := []string{"def", "print", "sum", "input.txt"}
+	foundKeyword := false
+	for _, keyword := range expectedKeywords {
+		if strings.Contains(code, keyword) {
+			foundKeyword = true
+			break
+		}
+	}
+	if !foundKeyword {
+		t.Errorf("Generated code does not contain any of the expected keywords: %v", expectedKeywords)
+	}
+}
+
 func TestDownloadChallenge(t *testing.T) {
 	_, cleanup := setupTestEnvironment(t)
 	defer cleanup()
