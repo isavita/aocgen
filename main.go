@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -49,27 +50,28 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-var getCacheDir func() string
+var baseCacheDir string
+
+func init() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	baseCacheDir = filepath.Join(homeDir, ".aocgen")
+}
+
+func getCacheDir() string {
+	return baseCacheDir
+}
+
+// Add this function to allow tests to set a custom cache directory
+func setBaseCacheDir(dir string) {
+	baseCacheDir = dir
+}
 
 const challengesFile = "challenges.json"
 const datasetParquet = "dataset.parquet"
 const datasetURL = "https://huggingface.co/datasets/isavita/advent-of-code/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
-
-func init() {
-	getCacheDir = func() string {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Printf("Error getting user home directory: %v\n", err)
-			os.Exit(1)
-		}
-		cacheDir := filepath.Join(homeDir, ".aocgen")
-		if err := os.MkdirAll(cacheDir, 0755); err != nil {
-			fmt.Printf("Failed to create cache directory: %v\n", err)
-			os.Exit(1)
-		}
-		return cacheDir
-	}
-}
 
 var aocBaseURL = "https://adventofcode.com"
 
@@ -165,21 +167,19 @@ func generateSolutionFile(challenge Challenge, flags Flags) error {
 		return err
 	}
 
-	filename := fmt.Sprintf("day%d_part%d_%d.%s", flags.Day, flags.Part, flags.Year, ext)
+	filename := fmt.Sprintf("%s.%s", challenge.Name, ext)
 
 	code, err := generateCodeWithAI(challenge, flags)
 	if err != nil {
 		return fmt.Errorf("error generating code with AI: %v", err)
 	}
 
-	file, err := os.Create(filename)
+	err = os.WriteFile(filename, []byte(code), 0644)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write solution file: %v", err)
 	}
-	defer file.Close()
 
-	_, err = file.WriteString(code)
-	return err
+	return nil
 }
 
 func callOllamaAPI(apiURL, model, prompt string) (string, error) {
@@ -562,10 +562,17 @@ func downloadChallenge(flags Flags) error {
 		Answer:       "",
 	}
 
-	// Save the challenge to the JSON file
-	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
+	// Ensure the cache directory exists
+	cacheDir := getCacheDir()
+	err = os.MkdirAll(cacheDir, 0755)
 	if err != nil {
-		challenges = []Challenge{}
+		return fmt.Errorf("failed to create cache directory: %v", err)
+	}
+
+	// Save the challenge to the JSON file
+	challenges, err := loadChallenges(cacheDir, "challenges.json")
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("error loading challenges: %v", err)
 	}
 
 	challenges = append(challenges, challenge)
@@ -616,7 +623,13 @@ func saveChallenges(filename string, challenges []Challenge) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(getCacheDir(), filename), data, 0644)
+	cacheDir := getCacheDir()
+	err = os.MkdirAll(cacheDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create cache directory: %v", err)
+	}
+
+	return os.WriteFile(filepath.Join(cacheDir, filename), data, 0644)
 }
 
 func runGenerateCommand(flags Flags) error {

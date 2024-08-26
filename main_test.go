@@ -37,25 +37,17 @@ func TestParseFlags(t *testing.T) {
 
 // TestLoadChallenges tests loading challenges from the JSON file
 func TestLoadChallenges(t *testing.T) {
-	// Create a temporary directory for the cache
-	tempDir, err := os.MkdirTemp("", "aocgen_cache")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create a challenges file in the temporary cache directory
-	challengesFile := filepath.Join(tempDir, "challenges.json")
+	challengesFile := filepath.Join(getCacheDir(), "challenges.json")
 	testData := []Challenge{
 		{Name: "day1_part1_2015", Input: "test input", Answer: "280", Task: "test task"},
 	}
 	data, _ := json.Marshal(testData)
-	err = os.WriteFile(challengesFile, data, 0644)
+	err := os.WriteFile(challengesFile, data, 0644)
 	if err != nil {
 		t.Fatalf("Failed to write test data: %v", err)
 	}
 
-	challenges, err := loadChallenges(tempDir, "challenges.json")
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
 	if err != nil {
 		t.Fatalf("Failed to load challenges: %v", err)
 	}
@@ -66,6 +58,17 @@ func TestLoadChallenges(t *testing.T) {
 }
 
 func TestGenerateSolutionFile(t *testing.T) {
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	err = os.Chdir(getCacheDir())
+	if err != nil {
+		t.Fatalf("Failed to change to cache directory: %v", err)
+	}
+
 	challenge := Challenge{
 		Name:  "day1_part1_2015",
 		Input: "test input",
@@ -80,7 +83,7 @@ func TestGenerateSolutionFile(t *testing.T) {
 		ModelAPI: "http://example.com", // This is not used for "test" model, but included for completeness
 	}
 
-	err := generateSolutionFile(challenge, flags)
+	err = generateSolutionFile(challenge, flags)
 	if err != nil {
 		t.Fatalf("Failed to generate solution file: %v", err)
 	}
@@ -97,6 +100,17 @@ func TestGenerateSolutionFile(t *testing.T) {
 }
 
 func TestGenerateSolutionFileUnsupportedLang(t *testing.T) {
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	err = os.Chdir(getCacheDir())
+	if err != nil {
+		t.Fatalf("Failed to change to cache directory: %v", err)
+	}
+
 	challenge := Challenge{
 		Name:  "day1_part1_2015",
 		Input: "test input",
@@ -110,7 +124,7 @@ func TestGenerateSolutionFileUnsupportedLang(t *testing.T) {
 		Model: "test-model",
 	}
 
-	err := generateSolutionFile(challenge, flags)
+	err = generateSolutionFile(challenge, flags)
 	if err == nil {
 		t.Errorf("Expected error for unsupported language, but got none")
 	}
@@ -127,12 +141,23 @@ func TestGenerateSolutionFileUnsupportedLang(t *testing.T) {
 
 // TestCreateInputFile tests the creation of an input file
 func TestCreateInputFile(t *testing.T) {
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	err = os.Chdir(getCacheDir())
+	if err != nil {
+		t.Fatalf("Failed to change to cache directory: %v", err)
+	}
+
 	challenge := Challenge{
 		Name:  "day1_part1_2015",
 		Input: "test input",
 	}
 
-	err := createInputFile(challenge)
+	err = createInputFile(challenge)
 	if err != nil {
 		t.Fatalf("Failed to create input file: %v", err)
 	}
@@ -178,7 +203,7 @@ func TestFindChallenge(t *testing.T) {
 
 func TestEvaluateSolution(t *testing.T) {
 	// Create a temporary solution file
-	tmpfile, err := os.CreateTemp("", "solution*.py")
+	tmpfile, err := os.CreateTemp(getCacheDir(), "solution*.py")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -369,6 +394,16 @@ func TestDownloadChallenge(t *testing.T) {
 	originalAocBaseURL := aocBaseURL
 	aocBaseURL = server.URL
 	defer func() { aocBaseURL = originalAocBaseURL }()
+
+	// Override getCacheDir function for this test
+	cacheDir := filepath.Join(getCacheDir(), "download_test")
+	err := os.MkdirAll(cacheDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create cache directory: %v", err)
+	}
+	originalGetCacheDir := getCacheDir
+	setBaseCacheDir(cacheDir)
+	defer func() { setBaseCacheDir(originalGetCacheDir()) }()
 
 	testCases := []struct {
 		name            string
@@ -614,7 +649,7 @@ func TestRealDownloadChallenge(t *testing.T) {
 				t.Errorf("Part 2 challenge should contain Part Two section")
 			}
 
-			err = os.WriteFile(tc.expectedFile, []byte(challenge.Task+"\n\nInput:\n"+challenge.Input), 0644)
+			err = os.WriteFile(filepath.Join(getCacheDir(), tc.expectedFile), []byte(challenge.Task+"\n\nInput:\n"+challenge.Input), 0644)
 			if err != nil {
 				t.Fatalf("Failed to write challenge to file: %v", err)
 			}
@@ -691,6 +726,17 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 		t.Skip("Skipping OpenAI test: OPENAI_API_KEY not set")
 	}
 
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	err = os.Chdir(getCacheDir())
+	if err != nil {
+		t.Fatalf("Failed to change to cache directory: %v", err)
+	}
+
 	challenge := Challenge{
 		Name:  "day1_part1_2015",
 		Input: "test input",
@@ -704,21 +750,6 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 		Model:    "gpt-3.5-turbo", // Using a known valid model
 		ModelAPI: "https://api.openai.com/v1/chat/completions",
 	}
-
-	// Create a temporary directory for the test
-	tempDir, err := os.MkdirTemp("", "aocgen_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Change to the temporary directory
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current working directory: %v", err)
-	}
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
 
 	err = generateSolutionFile(challenge, flags)
 	if err != nil {
@@ -753,6 +784,11 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 	os.Remove(filename)
 }
 
+func isValidPythonCode(code string) bool {
+	// This is a very basic check. You might want to improve it.
+	return strings.Contains(code, "def") || strings.Contains(code, "print") || strings.Contains(code, "import")
+}
+
 func TestGenerateSolutionFileOllama(t *testing.T) {
 	// Load the .env file
 	err := godotenv.Load()
@@ -763,6 +799,17 @@ func TestGenerateSolutionFileOllama(t *testing.T) {
 	// Check if SKIP_OLLAMA_TESTS is set
 	if os.Getenv("SKIP_OLLAMA_TESTS") != "" {
 		t.Skip("Skipping Ollama test: SKIP_OLLAMA_TESTS is set")
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	err = os.Chdir(getCacheDir())
+	if err != nil {
+		t.Fatalf("Failed to change to cache directory: %v", err)
 	}
 
 	challenge := Challenge{
@@ -778,21 +825,6 @@ func TestGenerateSolutionFileOllama(t *testing.T) {
 		Model:    "ollama/mistral-nemo",
 		ModelAPI: "http://localhost:11434/v1/chat/completions",
 	}
-
-	// Create a temporary directory for the test
-	tempDir, err := os.MkdirTemp("", "aocgen_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Change to the temporary directory
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current working directory: %v", err)
-	}
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
 
 	err = generateSolutionFile(challenge, flags)
 	if err != nil {
@@ -825,26 +857,4 @@ func TestGenerateSolutionFileOllama(t *testing.T) {
 
 	// Clean up
 	os.Remove(filename)
-}
-
-func isValidPythonCode(code string) bool {
-	// Check if the code contains common Python patterns
-	pythonPatterns := []string{
-		"def ",
-		"import ",
-		"with open",
-		"print(",
-		"for ",
-		"if ",
-		"while ",
-	}
-
-	for _, pattern := range pythonPatterns {
-		if strings.Contains(code, pattern) {
-			return true
-		}
-	}
-
-	// Check if the code contains 'input.txt'
-	return strings.Contains(code, "input.txt")
 }
