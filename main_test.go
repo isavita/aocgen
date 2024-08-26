@@ -911,3 +911,124 @@ func TestGenerateSolutionFileOpenAI(t *testing.T) {
 	// Clean up
 	os.Remove(filename)
 }
+
+func TestDownloadChallengePart2(t *testing.T) {
+	// Load environment variables
+	err := godotenv.Load()
+	if err != nil {
+		t.Fatalf("Error loading .env file: %v", err)
+	}
+
+	sessionToken := os.Getenv("ADVENT_OF_CODE_SESSION")
+	if sessionToken == "" {
+		t.Skip("Skipping test: ADVENT_OF_CODE_SESSION not set in .env file")
+	}
+
+	// Set up a mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check for valid session token
+		cookie, err := r.Cookie("session")
+		if err != nil || cookie.Value != sessionToken {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		switch r.URL.Path {
+		case "/2015/day/1":
+			// Simulate the HTML content for both parts
+			w.Write([]byte(`
+                <article class="day-desc">
+                    <h2>--- Day 1: Not Quite Lisp ---</h2>
+                    <p>Santa is trying to deliver presents in a large apartment building, but he can't find the right floor - the directions he got are a little confusing. He starts on the ground floor (floor 0) and then follows the instructions one character at a time.</p>
+                    <p>An opening parenthesis, (, means he should go up one floor, and a closing parenthesis, ), means he should go down one floor.</p>
+                    <p>The apartment building is very tall, and the basement is very deep; he will never find the top or bottom floors.</p>
+                    <p>For example:</p>
+                    <ul>
+                        <li>(()) and ()() both result in floor 0.</li>
+                        <li>((( and (()(()( both result in floor 3.</li>
+                        <li>))((((( also results in floor 3.</li>
+                        <li>()) and ))( both result in floor -1 (the first basement level).</li>
+                        <li>))) and )())()) both result in floor -3.</li>
+                    </ul>
+                    <p>To what floor do the instructions take Santa?</p>
+                </article>
+                <p>Your puzzle answer was 280.</p>
+                <article class="day-desc">
+                    <h2 id="part2">--- Part Two ---</h2>
+                    <p>Now, given the same instructions, find the position of the first character that causes him to enter the basement (floor -1).  The first character in the instructions has position 1, the second character has position 2, and so on.</p>
+                    <p>For example:</p>
+                    <ul>
+                        <li>) causes him to enter the basement at character position 1.</li>
+                        <li>()()) causes him to enter the basement at character position 5.</li>
+                    </ul>
+                    <p>What is the position of the character that causes Santa to first enter the basement?</p>
+                </article>
+            `))
+		case "/2015/day/1/input":
+			// Simulate the input data
+			w.Write([]byte("(()())"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	// Replace the actual URL with our test server URL
+	originalAocBaseURL := aocBaseURL
+	aocBaseURL = server.URL
+	defer func() { aocBaseURL = originalAocBaseURL }()
+
+	// Set up test flags
+	flags := Flags{
+		Day:     1,
+		Year:    2015,
+		Part:    2,
+		Session: sessionToken,
+	}
+
+	// Run the download function
+	err = downloadChallenge(flags)
+	if err != nil {
+		t.Fatalf("Failed to download challenge: %v", err)
+	}
+
+	// Load the downloaded challenge
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
+	if err != nil {
+		t.Fatalf("Failed to load challenges: %v", err)
+	}
+
+	// Check if the challenge was downloaded correctly
+	if len(challenges) == 0 {
+		t.Fatalf("No challenges loaded")
+	}
+
+	challenge := challenges[len(challenges)-1]
+
+	expectedContent := []string{
+		"--- Day 1: Not Quite Lisp ---",
+		"To what floor do the instructions take Santa?",
+		"--- Part Two ---",
+		"What is the position of the character that causes Santa to first enter the basement?",
+	}
+
+	for _, content := range expectedContent {
+		if !strings.Contains(challenge.Task, content) {
+			t.Errorf("Challenge task does not contain expected content: %s", content)
+		}
+	}
+
+	// Check the input
+	expectedInput := "(()())"
+	if challenge.Input != expectedInput {
+		t.Errorf("Challenge input does not match expected content. Got: %s, Want: %s", challenge.Input, expectedInput)
+	}
+
+	// Check other fields
+	if challenge.Name != "day1_part2_2015" {
+		t.Errorf("Incorrect challenge name. Got: %s, Want: day1_part2_2015", challenge.Name)
+	}
+	if challenge.Year != 2015 {
+		t.Errorf("Incorrect challenge year. Got: %d, Want: 2015", challenge.Year)
+	}
+}
