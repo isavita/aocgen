@@ -33,6 +33,7 @@ type Flags struct {
 	Model    string
 	ModelAPI string
 	Session  string
+	Timeout  int64
 }
 
 type Challenge struct {
@@ -88,6 +89,7 @@ func parseFlags(args []string) (Flags, error) {
 	flagSet.StringVar(&flags.Model, "model", "", "AI model to use")
 	flagSet.StringVar(&flags.ModelAPI, "model_api", "", "API endpoint for the AI model")
 	flagSet.StringVar(&flags.Session, "session", "", "Session token for Advent of Code")
+	flagSet.Int64Var(&flags.Timeout, "timeout", 0, "Timeout in milliseconds")
 
 	if len(args) == 0 {
 		return flags, nil
@@ -497,7 +499,7 @@ func findChallenge(challenges []Challenge, flags Flags) (Challenge, error) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
+		fmt.Println("Expected 'generate', 'download', 'eval', 'list', 'setup', or 'perf' subcommands")
 		os.Exit(1)
 	}
 
@@ -542,8 +544,18 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "perf":
+		flags, err := parseFlags(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runPerformanceBenchmark(flags); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
-		fmt.Println("Expected 'generate', 'download', 'eval', 'list', or 'setup' subcommands")
+		fmt.Println("Expected 'generate', 'download', 'eval', 'list', 'setup', or 'perf' subcommands")
 		os.Exit(1)
 	}
 }
@@ -782,8 +794,144 @@ func generateSolution(flags Flags) error {
 		return fmt.Errorf("error generating solution file: %v", err)
 	}
 
+	// Set the SolutionLang field
+	challenge.SolutionLang = flags.Lang
+
+	// Save the updated challenges
+	err = saveChallenges(challenges)
+	if err != nil {
+		return fmt.Errorf("error saving updated challenges: %v", err)
+	}
+
 	fmt.Println("Challenge files created successfully!")
 	return nil
+}
+
+func runPerformanceBenchmark(flags Flags) error {
+	if flags.Lang == "" {
+		return fmt.Errorf("language is required for performance benchmark")
+	}
+
+	challenges, err := loadChallenges(getCacheDir(), "challenges.json")
+	if err != nil {
+		return fmt.Errorf("error loading challenges: %v", err)
+	}
+
+	fmt.Printf("Total challenges loaded: %d\n", len(challenges))
+
+	results := make([]BenchmarkResult, 0)
+	matchingChallenges := 0
+
+	for _, challenge := range challenges {
+		if strings.EqualFold(challenge.SolutionLang, flags.Lang) {
+			matchingChallenges++
+			ext, err := getFileExtension(flags.Lang)
+			if err != nil {
+				fmt.Printf("Error getting file extension for %s: %v\n", challenge.Name, err)
+				continue
+			}
+			filename := fmt.Sprintf("%s.%s", challenge.Name, ext)
+
+			// Check if the file exists
+			if _, err := os.Stat(filename); os.IsNotExist(err) {
+				fmt.Printf("Solution file not found for %s, skipping\n", challenge.Name)
+				continue
+			}
+
+			// Create input file for the challenge
+			err = createInputFile(challenge)
+			if err != nil {
+				fmt.Printf("Error creating input file for %s: %v\n", challenge.Name, err)
+				continue
+			}
+
+			fmt.Printf("Benchmarking %s...\n", challenge.Name)
+			duration, err := benchmarkSolution(challenge, filename, flags.Lang, time.Duration(flags.Timeout)*time.Millisecond)
+			if err != nil {
+				fmt.Printf("Error benchmarking %s: %v\n", challenge.Name, err)
+			} else {
+				results = append(results, BenchmarkResult{
+					ChallengeName: challenge.Name,
+					Duration:      duration,
+				})
+			}
+
+			// Clean up input file
+			os.Remove("input.txt")
+		}
+	}
+
+	if matchingChallenges == 0 {
+		fmt.Printf("No challenges found for language: %s\n", flags.Lang)
+		return nil
+	}
+
+	fmt.Printf("Matching challenges: %d\n", matchingChallenges)
+	fmt.Printf("Successfully benchmarked challenges: %d\n", len(results))
+
+	// Sort results by duration in descending order
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Duration > results[j].Duration
+	})
+
+	// Print results
+	fmt.Printf("\nPerformance Benchmark Results for %s:\n", flags.Lang)
+	fmt.Println("----------------------------------------")
+	for _, result := range results {
+		if result.Duration >= time.Duration(flags.Timeout)*time.Millisecond {
+			fmt.Printf("%s: Timeout (>%dms)\n", result.ChallengeName, flags.Timeout)
+		} else {
+			fmt.Printf("%s: %v\n", result.ChallengeName, result.Duration)
+		}
+	}
+
+	return nil
+}
+
+type BenchmarkResult struct {
+	ChallengeName string
+	Duration      time.Duration
+}
+
+func benchmarkSolution(challenge Challenge, filename string, lang string, timeout time.Duration) (time.Duration, error) {
+	cmd := getCommand(lang, filename)
+	if cmd == nil {
+		return 0, fmt.Errorf("unsupported language: %s", lang)
+	}
+
+	start := time.Now()
+
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+	err := cmd.Run()
+	duration := time.Since(start)
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return timeout, nil // Timeout occurred
+		}
+		return 0, fmt.Errorf("error running command: %v", err)
+	}
+
+	return duration, nil
+}
+
+func getCommand(lang, filepath string) *exec.Cmd {
+	switch lang {
+	case "go":
+		return exec.Command("go", "run", filepath)
+	case "python":
+		return exec.Command("python", filepath)
+	// Add more languages as needed
+	default:
+		return nil
+	}
 }
 
 func runEvaluationCommand(flags Flags) error {
@@ -852,26 +1000,6 @@ func evaluateSolution(challenge Challenge, filename string, lang string, timeout
 
 	output := out.String()
 	return strings.Contains(output, challenge.Answer), output, nil
-}
-
-func getCommand(lang, filename string) *exec.Cmd {
-	switch lang {
-	case "python":
-		return exec.Command("python", filename)
-	case "javascript":
-		return exec.Command("node", filename)
-	case "ruby":
-		return exec.Command("ruby", filename)
-	case "go":
-		return exec.Command("go", "run", filename)
-	case "java":
-		return exec.Command("java", filename)
-	case "elixir":
-		return exec.Command("elixir", filename)
-	// Add more cases for other languages as needed
-	default:
-		return nil
-	}
 }
 
 func ListChallenges() error {

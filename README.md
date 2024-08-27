@@ -91,6 +91,14 @@ aocgen eval --day <day> --part <part> --year <year> --lang <language>
 - `--year`: The year of the challenge
 - `--lang`: The programming language of the solution
 
+### Performance Benchmark
+
+Run performance benchmarks for solutions in a specific language:
+
+```bash
+aocgen perf --lang <language> --timeout <timeout_milliseconds>
+```
+
 ## Feature Checklist
 
 - [x] Setup dataset
@@ -103,7 +111,7 @@ aocgen eval --day <day> --part <part> --year <year> --lang <language>
 - [ ] Progress tracking for completed challenges
 - [ ] Integration with version control systems
 - [ ] Support for custom solution templates
-- [ ] Performance benchmarking of solutions
+- [x] Performance benchmarking of solutions
 
 ## Running Tests
 
