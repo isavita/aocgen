@@ -922,13 +922,21 @@ func benchmarkSolution(challenge Challenge, filename string, lang string, timeou
 	return duration, nil
 }
 
-func getCommand(lang, filepath string) *exec.Cmd {
+func getCommand(lang, filename string) *exec.Cmd {
 	switch lang {
-	case "go":
-		return exec.Command("go", "run", filepath)
 	case "python":
-		return exec.Command("python", filepath)
-	// Add more languages as needed
+		return exec.Command("python", filename)
+	case "javascript":
+		return exec.Command("node", filename)
+	case "ruby":
+		return exec.Command("ruby", filename)
+	case "go":
+		return exec.Command("go", "run", filename)
+	case "java":
+		return exec.Command("java", filename)
+	case "elixir":
+		return exec.Command("elixir", filename)
+	// Add more cases for other languages as needed
 	default:
 		return nil
 	}
